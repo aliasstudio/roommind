@@ -45,6 +45,9 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             "idle_action": dev.get("idle_action", "off"),
             "idle_fan_mode": dev.get("idle_fan_mode", ""),
             "active_fan_mode": dev.get("active_fan_mode", ""),
+            "fan_control": dev.get("fan_control", "off"),
+            "fan_min_mode": dev.get("fan_min_mode", ""),
+            "fan_max_mode": dev.get("fan_max_mode", ""),
         }
         if state:
             attrs = state.attributes

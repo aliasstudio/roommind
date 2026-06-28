@@ -724,34 +724,133 @@ export class RsDeviceSection extends LitElement {
               : nothing}
             ${((entityState?.attributes?.fan_modes ?? []) as string[]).length > 0
               ? html`<div class="detail-field with-info">
-                  <ha-select
-                    .label=${localize("devices.active_fan_mode", lang)}
-                    .value=${device.active_fan_mode ? device.active_fan_mode : "__keep__"}
-                    .options=${[
-                      { value: "__keep__", label: localize("devices.active_fan_mode_keep", lang) },
-                      ...((entityState?.attributes?.fan_modes ?? []) as string[]).map((fm) => ({
-                        value: fm,
-                        label: fm,
-                      })),
-                    ]}
-                    @selected=${(e: Event) => {
-                      const v = getSelectValue(e);
-                      this._onActiveFanModeChange(entityId, v === "__keep__" ? "" : v!);
-                    }}
-                    @closed=${(e: Event) => e.stopPropagation()}
-                    fixedMenuPosition
-                  >
-                    <ha-list-item value="__keep__"
-                      >${localize("devices.active_fan_mode_keep", lang)}</ha-list-item
+                    <ha-select
+                      .label=${localize("devices.fan_control", lang)}
+                      .value=${device.fan_control ?? "off"}
+                      .options=${[
+                        { value: "off", label: localize("devices.fan_control_off", lang) },
+                        { value: "fixed", label: localize("devices.fan_control_fixed", lang) },
+                        { value: "auto", label: localize("devices.fan_control_auto", lang) },
+                      ]}
+                      @selected=${(e: Event) =>
+                        this._onFanControlChange(entityId, getSelectValue(e)!)}
+                      @closed=${(e: Event) => e.stopPropagation()}
+                      fixedMenuPosition
                     >
-                    ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
-                      (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
-                    )}
-                  </ha-select>
-                  <rs-info-icon
-                    .text=${localize("devices.active_fan_mode_hint", lang)}
-                  ></rs-info-icon>
-                </div>`
+                      <ha-list-item value="off"
+                        >${localize("devices.fan_control_off", lang)}</ha-list-item
+                      >
+                      <ha-list-item value="fixed"
+                        >${localize("devices.fan_control_fixed", lang)}</ha-list-item
+                      >
+                      <ha-list-item value="auto"
+                        >${localize("devices.fan_control_auto", lang)}</ha-list-item
+                      >
+                    </ha-select>
+                    <rs-info-icon
+                      .text=${localize("devices.fan_control_hint", lang)}
+                    ></rs-info-icon>
+                  </div>
+                  ${device.fan_control === "fixed"
+                    ? html`<div class="detail-field">
+                        <ha-select
+                          .label=${localize("devices.active_fan_mode", lang)}
+                          .value=${device.active_fan_mode ? device.active_fan_mode : "__keep__"}
+                          .options=${[
+                            {
+                              value: "__keep__",
+                              label: localize("devices.active_fan_mode_keep", lang),
+                            },
+                            ...((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                              (fm) => ({
+                                value: fm,
+                                label: fm,
+                              }),
+                            ),
+                          ]}
+                          @selected=${(e: Event) => {
+                            const v = getSelectValue(e);
+                            this._onActiveFanModeChange(entityId, v === "__keep__" ? "" : v!);
+                          }}
+                          @closed=${(e: Event) => e.stopPropagation()}
+                          fixedMenuPosition
+                        >
+                          <ha-list-item value="__keep__"
+                            >${localize("devices.active_fan_mode_keep", lang)}</ha-list-item
+                          >
+                          ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                            (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
+                          )}
+                        </ha-select>
+                      </div>`
+                    : nothing}
+                  ${device.fan_control === "auto"
+                    ? html`<div class="detail-field">
+                          <ha-select
+                            .label=${localize("devices.fan_min_mode", lang)}
+                            .value=${device.fan_min_mode ? device.fan_min_mode : "__min__"}
+                            .options=${[
+                              {
+                                value: "__min__",
+                                label: localize("devices.fan_bound_default", lang),
+                              },
+                              ...((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                                (fm) => ({
+                                  value: fm,
+                                  label: fm,
+                                }),
+                              ),
+                            ]}
+                            @selected=${(e: Event) => {
+                              const v = getSelectValue(e);
+                              this._onFanMinModeChange(entityId, v === "__min__" ? "" : v!);
+                            }}
+                            @closed=${(e: Event) => e.stopPropagation()}
+                            fixedMenuPosition
+                          >
+                            <ha-list-item value="__min__"
+                              >${localize("devices.fan_bound_default", lang)}</ha-list-item
+                            >
+                            ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                              (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
+                            )}
+                          </ha-select>
+                        </div>
+                        <div class="detail-field with-info">
+                          <ha-select
+                            .label=${localize("devices.fan_max_mode", lang)}
+                            .value=${device.fan_max_mode ? device.fan_max_mode : "__max__"}
+                            .options=${[
+                              {
+                                value: "__max__",
+                                label: localize("devices.fan_bound_default", lang),
+                              },
+                              ...((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                                (fm) => ({
+                                  value: fm,
+                                  label: fm,
+                                }),
+                              ),
+                            ]}
+                            @selected=${(e: Event) => {
+                              const v = getSelectValue(e);
+                              this._onFanMaxModeChange(entityId, v === "__max__" ? "" : v!);
+                            }}
+                            @closed=${(e: Event) => e.stopPropagation()}
+                            fixedMenuPosition
+                          >
+                            <ha-list-item value="__max__"
+                              >${localize("devices.fan_bound_default", lang)}</ha-list-item
+                            >
+                            ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                              (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
+                            )}
+                          </ha-select>
+                          <rs-info-icon
+                            .text=${localize("devices.fan_auto_hint", lang)}
+                          ></rs-info-icon>
+                        </div>`
+                    : nothing} `
               : nothing}
           `
         : nothing}
@@ -916,6 +1015,27 @@ export class RsDeviceSection extends LitElement {
   private _onActiveFanModeChange(entityId: string, fanMode: string): void {
     const newDevices = this.devices.map((d) =>
       d.entity_id === entityId ? { ...d, active_fan_mode: fanMode } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onFanControlChange(entityId: string, fanControl: string): void {
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, fan_control: fanControl as "off" | "fixed" | "auto" } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onFanMinModeChange(entityId: string, fanMode: string): void {
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, fan_min_mode: fanMode } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onFanMaxModeChange(entityId: string, fanMode: string): void {
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, fan_max_mode: fanMode } : d,
     );
     this._fireDeviceChanged(newDevices);
   }

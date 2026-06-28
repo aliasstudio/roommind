@@ -69,6 +69,9 @@ export interface DeviceConfig {
   idle_action?: "off" | "fan_only" | "setback" | "low"; // default "off"
   idle_fan_mode?: string; // default "low"
   active_fan_mode?: string; // fan mode while actively heating/cooling; "" = leave to device (default)
+  fan_control?: "off" | "fixed" | "auto"; // active fan strategy; default "off"
+  fan_min_mode?: string; // auto: weakest allowed ladder speed ("" = ladder min)
+  fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
 }
 

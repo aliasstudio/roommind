@@ -34,6 +34,90 @@ DEFAULT_IDLE_SETBACK_OFFSET = 2.0
 SETPOINT_MODE_PROPORTIONAL = "proportional"
 SETPOINT_MODE_DIRECT = "direct"
 
+# Fan-speed control strategy while a device is actively heating/cooling.
+FAN_CONTROL_OFF = "off"  # leave fan to the device/firmware (legacy default)
+FAN_CONTROL_FIXED = "fixed"  # always force the configured active_fan_mode
+FAN_CONTROL_AUTO = "auto"  # auto-escalate across a speed ladder by demand
+VALID_FAN_CONTROL_MODES = {FAN_CONTROL_OFF, FAN_CONTROL_FIXED, FAN_CONTROL_AUTO}
+DEFAULT_FAN_CONTROL = FAN_CONTROL_OFF
+
+# Canonical strength ranking for common fan-mode labels (weakest -> strongest).
+# Used to order a device's reported ``fan_modes`` into an escalation ladder.
+# Labels are matched case-insensitively by substring; non-graded labels such
+# as "auto" / "diffuse" are excluded from the ladder entirely.
+_FAN_STRENGTH_TOKENS: list[tuple[str, int]] = [
+    ("mid-high", 45),
+    ("medium-high", 45),
+    ("mid-low", 25),
+    ("medium-low", 25),
+    ("silent", 0),
+    ("mute", 0),
+    ("quiet", 0),
+    ("night", 0),
+    ("sleep", 0),
+    ("turbo", 70),
+    ("strong", 70),
+    ("powerful", 70),
+    ("boost", 70),
+    ("max", 65),
+    ("high", 60),
+    ("medium", 35),
+    ("mid", 35),
+    ("low", 20),
+    ("min", 15),
+]
+# Labels that never belong in the escalation ladder (no defined strength).
+_FAN_LADDER_EXCLUDE = ("auto", "diffuse", "natural")
+
+
+def _fan_strength(label: str) -> int | None:
+    """Return a coarse strength score for a fan-mode label, or None if ungraded.
+
+    Matching is case-insensitive and substring-based; the longest/most specific
+    tokens (e.g. "mid-high") are listed before their substrings ("high") so the
+    specific match wins.
+    """
+    low = label.strip().lower()
+    if any(tok in low for tok in _FAN_LADDER_EXCLUDE):
+        return None
+    for token, score in _FAN_STRENGTH_TOKENS:
+        if token in low:
+            return score
+    return None
+
+
+def order_fan_modes(fan_modes: list[str]) -> list[str]:
+    """Order a device's fan modes weakest -> strongest for auto escalation.
+
+    Ungraded labels (e.g. "Auto", "Diffuse") are dropped — they have no place
+    on a strength ladder. Graded labels with an identical score keep their
+    original relative order (stable sort). Unknown labels are excluded so the
+    ladder only contains speeds we can reason about.
+    """
+    graded: list[tuple[int, int, str]] = []
+    for idx, fm in enumerate(fan_modes):
+        score = _fan_strength(fm)
+        if score is None:
+            continue
+        graded.append((score, idx, fm))
+    graded.sort(key=lambda t: (t[0], t[1]))
+    return [fm for _, _, fm in graded]
+
+
+def get_fan_control(devices: list[dict], entity_id: str) -> tuple[str, str, str]:
+    """Return (fan_control, fan_min_mode, fan_max_mode) for a device.
+
+    ``fan_control`` is one of off/fixed/auto. ``fan_min_mode`` / ``fan_max_mode``
+    bound the auto-escalation ladder (empty = use the ladder's natural ends).
+    """
+    dev = get_device_by_eid(devices, entity_id)
+    if dev is None:
+        return (DEFAULT_FAN_CONTROL, "", "")
+    mode = dev.get("fan_control", DEFAULT_FAN_CONTROL)
+    if mode not in VALID_FAN_CONTROL_MODES:
+        mode = DEFAULT_FAN_CONTROL
+    return (mode, dev.get("fan_min_mode", ""), dev.get("fan_max_mode", ""))
+
 # Active HVAC modes that indicate real device capabilities.
 _ACTIVE_HVAC_MODES = {"heat", "cool", "heat_cool", "auto"}
 

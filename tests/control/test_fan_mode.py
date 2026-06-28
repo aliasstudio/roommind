@@ -492,6 +492,34 @@ async def test_active_fan_mode_unsupported_skipped():
     assert len(fan_calls) == 0
 
 
+@pytest.mark.asyncio
+async def test_fan_override_beats_static_config():
+    """A coordinator fan_overrides entry wins over the static active_fan_mode."""
+    _last_commands.clear()
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=_make_ac_for_active_fan("Auto"))
+    ctrl = _make_active_fan_ctrl(hass, "Low")  # static config says Low
+    await ctrl.async_apply("cooling", 23.0, current_temp=24.0, fan_overrides={"climate.ac1": "High"})
+
+    fan_calls = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_fan_mode"]
+    assert len(fan_calls) == 1
+    assert fan_calls[0][0][2]["fan_mode"] == "High"
+
+
+@pytest.mark.asyncio
+async def test_fan_override_falls_back_to_config_when_absent():
+    """With no override for the entity, the static active_fan_mode is used."""
+    _last_commands.clear()
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=_make_ac_for_active_fan("Auto"))
+    ctrl = _make_active_fan_ctrl(hass, "Low")
+    await ctrl.async_apply("cooling", 23.0, current_temp=24.0, fan_overrides={"climate.other": "High"})
+
+    fan_calls = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_fan_mode"]
+    assert len(fan_calls) == 1
+    assert fan_calls[0][0][2]["fan_mode"] == "Low"
+
+
 # ---------------------------------------------------------------------------
 # async_idle_device — "low" unit tests
 # ---------------------------------------------------------------------------

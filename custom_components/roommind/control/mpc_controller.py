@@ -764,6 +764,7 @@ class MPCController:
         self.q_occupancy = q_occupancy
         self._idle_targets: TargetTemps | None = None
         self._force_off = False
+        self._fan_overrides: dict[str, str] = {}
 
         s = settings or {}
         self.outdoor_cooling_min = s.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
@@ -1230,6 +1231,7 @@ class MPCController:
         compressor_forced_on: set[str] | None = None,
         compressor_forced_off: set[str] | None = None,
         force_off: bool = False,
+        fan_overrides: dict[str, str] | None = None,
     ) -> None:
         """Apply the determined mode with proportional valve control.
 
@@ -1240,6 +1242,9 @@ class MPCController:
         """
         _forced_on = compressor_forced_on or set()
         _forced_off = compressor_forced_off or set()
+        # Per-device active fan mode resolved by the coordinator (auto
+        # escalation). Takes precedence over the static active_fan_mode config.
+        self._fan_overrides = fan_overrides or {}
 
         # Backward compat: accept legacy keyword
         if target_temp is not _SENTINEL:
@@ -1671,12 +1676,13 @@ class MPCController:
     async def _apply_active_fan_mode(self, eid: str) -> None:
         """Apply the configured active fan mode while a device heats/cools.
 
-        No-op when no ``active_fan_mode`` is configured (empty = leave the
-        device/firmware in control, preserving prior behavior). Unsupported
-        modes and redundant sends are skipped so the AC is not spammed every
-        control cycle.
+        A coordinator-supplied override (auto-escalation) wins over the static
+        ``active_fan_mode`` config. No-op when neither yields a target (empty =
+        leave the device/firmware in control, preserving prior behavior).
+        Unsupported modes and redundant sends are skipped so the AC is not
+        spammed every control cycle.
         """
-        fan_mode = get_active_fan_mode(self._devices, eid)
+        fan_mode = self._fan_overrides.get(eid) or get_active_fan_mode(self._devices, eid)
         if not fan_mode:
             return
         state = self.hass.states.get(eid)

@@ -61,6 +61,7 @@ from .managers.compressor_group_manager import (
 )
 from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.ekf_training_manager import EkfTrainingManager
+from .managers.fan_speed_manager import FanSpeedManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
 from .managers.mold_manager import MoldManager
 from .managers.residual_heat_tracker import ResidualHeatTracker
@@ -68,11 +69,14 @@ from .managers.valve_manager import ValveManager
 from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
 from .utils.device_utils import (
+    FAN_CONTROL_AUTO,
     build_rooms_devices_map,
     get_ac_eids,
     get_all_entity_ids,
     get_direct_setpoint_eids,
+    get_fan_control,
     get_trv_eids,
+    order_fan_modes,
     room_contributes_to_group,
 )
 from .utils.history_store import HistoryStore
@@ -145,6 +149,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._outdoor_unavailable_cycles: int = 0
         self._outdoor_warning_sent: bool = False
         self._window_manager = WindowManager()
+        self._fan_speed_manager = FanSpeedManager()
         self._previous_modes: dict[str, str] = {}
         self._model_manager: RoomModelManager = RoomModelManager()
         self._model_loaded = False
@@ -863,6 +868,19 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 area_id,
             )
         else:
+            # --- Auto fan-speed escalation (per AC device, opt-in) ---
+            fan_overrides = self._resolve_fan_overrides(
+                room=room,
+                mode=mode,
+                current_temp=current_temp,
+                targets=targets,
+                power_fraction=power_fraction,
+                climate_active=climate_active,
+                window_open=window_open,
+                force_off=force_off,
+                cycling_eids=cycling_eids,
+                compressor_forced_off=compressor_forced_off,
+            )
             try:
                 await controller.async_apply(
                     mode,
@@ -877,6 +895,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     compressor_forced_on=compressor_forced_on or None,
                     compressor_forced_off=compressor_forced_off or None,
                     force_off=force_off,
+                    fan_overrides=fan_overrides or None,
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning(
@@ -1001,6 +1020,77 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mpc_active=mpc_active,
             compressor_protection_reason=compressor_protection_reason,
         )
+
+    def _resolve_fan_overrides(
+        self,
+        *,
+        room: dict,
+        mode: str,
+        current_temp: float | None,
+        targets: TargetTemps,
+        power_fraction: float,
+        climate_active: bool,
+        window_open: bool,
+        force_off: bool,
+        cycling_eids: set[str],
+        compressor_forced_off: set[str],
+    ) -> dict[str, str]:
+        """Resolve auto-escalated fan modes for AC devices configured fan_control='auto'.
+
+        Returns a {entity_id: fan_mode} map for devices whose speed RoomMind
+        should drive this cycle. Devices set to 'off'/'fixed' are not included
+        (the controller handles 'fixed' from static config). The escalation is
+        evaluated even while idle so the ladder state stays warm, but idle
+        cycles return no override (idle fan handling is per idle_action).
+        """
+        overrides: dict[str, str] = {}
+        devices = room.get("devices", [])
+        ac_eids = get_ac_eids(devices)
+        if not ac_eids:
+            return overrides
+
+        # The active flag gates *escalation*; idle still ticks the state machine.
+        is_active_mode = mode in (MODE_COOLING, MODE_HEATING)
+        controllable = climate_active and not window_open and not force_off
+
+        if mode == MODE_COOLING and targets.cool is not None and current_temp is not None:
+            deficit = current_temp - targets.cool
+        elif mode == MODE_HEATING and targets.heat is not None and current_temp is not None:
+            deficit = targets.heat - current_temp
+        else:
+            deficit = 0.0
+
+        for eid in ac_eids:
+            fan_control, min_label, max_label = get_fan_control(devices, eid)
+            if fan_control != FAN_CONTROL_AUTO:
+                self._fan_speed_manager.reset(eid)
+                continue
+            state = self.hass.states.get(eid)
+            ladder = order_fan_modes((state.attributes.get("fan_modes") or []) if state else [])
+            if not ladder:
+                continue
+            min_idx = ladder.index(min_label) if min_label in ladder else 0
+            max_idx = ladder.index(max_label) if max_label in ladder else len(ladder) - 1
+            if min_idx > max_idx:
+                min_idx, max_idx = max_idx, min_idx
+            device_active = (
+                controllable
+                and is_active_mode
+                and eid not in cycling_eids
+                and eid not in compressor_forced_off
+            )
+            chosen = self._fan_speed_manager.evaluate(
+                eid,
+                ladder,
+                active=device_active,
+                deficit=deficit,
+                power_fraction=power_fraction,
+                min_idx=min_idx,
+                max_idx=max_idx,
+            )
+            if chosen is not None and device_active:
+                overrides[eid] = chosen
+        return overrides
 
     async def _observe_and_train(
         self,
