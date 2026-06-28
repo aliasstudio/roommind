@@ -70,6 +70,7 @@ from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
 from .utils.device_utils import (
     FAN_CONTROL_AUTO,
+    apply_idle_override,
     build_rooms_devices_map,
     get_ac_eids,
     get_all_entity_ids,
@@ -660,10 +661,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 break
             # unavailable/unknown/off → skip (conservative: no occupancy heat)
 
+        # Schedule-driven idle behavior: a schedule block may override how
+        # devices idle (e.g. fully off overnight, fan_only by day). Overlay it
+        # onto a per-cycle copy so get_idle_action/async_idle_device pick it up
+        # without extra plumbing; the stored room config is left untouched.
+        room_for_control = self._room_for_control(room, schedule_blocks)
+
         # Determine and apply mode with MPC controller
         controller = MPCController(
             self.hass,
-            room,
+            room_for_control,
             model_manager=self._model_manager,
             outdoor_temp=self.outdoor_temp_effective,
             outdoor_forecast=outdoor_forecast,
@@ -1020,6 +1027,24 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mpc_active=mpc_active,
             compressor_protection_reason=compressor_protection_reason,
         )
+
+    def _room_for_control(self, room: dict, schedule_blocks: dict | None) -> dict:
+        """Return *room*, or a per-cycle copy with a schedule idle override applied.
+
+        Reads the active schedule block's ``idle_action`` / ``idle_fan_mode`` and
+        overlays it onto the devices (where applicable to each device type) so a
+        schedule can dictate night-off / day-fan_only idling. Returns the original
+        room object untouched when no override applies.
+        """
+        from .utils.schedule_utils import resolve_schedule_idle
+
+        idle_override = resolve_schedule_idle(schedule_blocks, time.time())
+        if idle_override is None:
+            return room
+        return {
+            **room,
+            "devices": apply_idle_override(room.get("devices", []), idle_override),
+        }
 
     def _resolve_fan_overrides(
         self,

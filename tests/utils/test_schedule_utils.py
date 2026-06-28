@@ -18,9 +18,50 @@ from custom_components.roommind.utils.schedule_utils import (
     get_active_schedule_entity,
     make_target_resolver,
     read_schedule_blocks,
+    resolve_schedule_idle,
     resolve_schedule_index,
     resolve_target_at_time,
 )
+
+# ---------------------------------------------------------------------------
+# resolve_schedule_idle
+# ---------------------------------------------------------------------------
+
+_MON_NIGHT = datetime(2024, 1, 1, 2, 0).timestamp()  # 2024-01-01 is a Monday
+_MON_DAY = datetime(2024, 1, 1, 12, 0).timestamp()
+
+_IDLE_BLOCKS = {
+    "monday": [
+        {"from": "00:00:00", "to": "08:00:00", "data": {"idle_action": "off"}},
+        {"from": "08:00:00", "to": "23:59:59", "data": {"idle_action": "fan_only", "idle_fan_mode": "Low"}},
+    ]
+}
+
+
+def test_resolve_schedule_idle_none_blocks():
+    assert resolve_schedule_idle(None, _MON_DAY) is None
+
+
+def test_resolve_schedule_idle_night_off():
+    assert resolve_schedule_idle(_IDLE_BLOCKS, _MON_NIGHT) == {"idle_action": "off"}
+
+
+def test_resolve_schedule_idle_day_fan_only_with_fan():
+    assert resolve_schedule_idle(_IDLE_BLOCKS, _MON_DAY) == {
+        "idle_action": "fan_only",
+        "idle_fan_mode": "Low",
+    }
+
+
+def test_resolve_schedule_idle_block_without_idle_key():
+    blocks = {"monday": [{"from": "00:00:00", "to": "23:59:59", "data": {"temperature": 21}}]}
+    assert resolve_schedule_idle(blocks, _MON_DAY) is None
+
+
+def test_resolve_schedule_idle_no_active_block():
+    blocks = {"tuesday": [{"from": "00:00:00", "to": "23:59:59", "data": {"idle_action": "off"}}]}
+    # Monday timestamp, only tuesday defined -> no active block
+    assert resolve_schedule_idle(blocks, _MON_DAY) is None
 
 # ---------------------------------------------------------------------------
 # Helpers

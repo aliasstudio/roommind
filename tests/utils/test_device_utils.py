@@ -656,3 +656,59 @@ class TestRoomContributesToGroup:
     def test_unknown_active_sources_value(self):
         # Fail-safe: unknown orchestration state -> master stays idle.
         assert room_contributes_to_group([self.TRV], {"climate.trv1"}, "invalid") is False
+
+
+# ---------------------------------------------------------------------------
+# apply_idle_override — schedule-driven idle action overlay
+# ---------------------------------------------------------------------------
+
+
+class TestApplyIdleOverride:
+    AC = {"entity_id": "climate.ac1", "type": "ac", "idle_action": "off", "idle_fan_mode": "low"}
+    TRV = {"entity_id": "climate.trv1", "type": "trv", "idle_action": "low"}
+
+    def test_none_override_returns_same_object(self):
+        from custom_components.roommind.utils.device_utils import apply_idle_override
+
+        devices = [self.AC, self.TRV]
+        assert apply_idle_override(devices, None) is devices
+        assert apply_idle_override(devices, {}) is devices
+
+    def test_fan_only_applies_to_ac_not_trv(self):
+        from custom_components.roommind.utils.device_utils import apply_idle_override
+
+        out = apply_idle_override([self.AC, self.TRV], {"idle_action": "fan_only", "idle_fan_mode": "Mute"})
+        assert out[0]["idle_action"] == "fan_only"
+        assert out[0]["idle_fan_mode"] == "Mute"
+        # fan_only is not applicable to a TRV -> keeps its configured action
+        assert out[1]["idle_action"] == "low"
+
+    def test_off_applies_to_both(self):
+        from custom_components.roommind.utils.device_utils import apply_idle_override
+
+        out = apply_idle_override([self.AC, self.TRV], {"idle_action": "off"})
+        assert out[0]["idle_action"] == "off"
+        assert out[1]["idle_action"] == "off"
+
+    def test_low_applies_to_trv_not_ac(self):
+        from custom_components.roommind.utils.device_utils import apply_idle_override
+
+        out = apply_idle_override([self.AC, self.TRV], {"idle_action": "low"})
+        assert out[0]["idle_action"] == "off"  # AC unchanged (low not applicable)
+        assert out[1]["idle_action"] == "low"
+
+    def test_does_not_mutate_input(self):
+        from custom_components.roommind.utils.device_utils import apply_idle_override
+
+        ac = dict(self.AC)
+        apply_idle_override([ac], {"idle_action": "fan_only", "idle_fan_mode": "High"})
+        assert ac["idle_action"] == "off"
+        assert ac["idle_fan_mode"] == "low"
+
+    def test_fan_mode_only_set_for_fan_only_action(self):
+        from custom_components.roommind.utils.device_utils import apply_idle_override
+
+        # setback action: idle_fan_mode should NOT be injected
+        out = apply_idle_override([self.AC], {"idle_action": "setback", "idle_fan_mode": "High"})
+        assert out[0]["idle_action"] == "setback"
+        assert out[0]["idle_fan_mode"] == "low"  # unchanged

@@ -117,6 +117,27 @@ In those cases RoomMind turns the devices off even if `When idle` is set to `Fan
 
 The single exception is `Low` on thermostats: it stays active because the affected TRVs stop responding after being set to `off`. Lowering the setpoint to the device minimum already stops all heat output.
 
+## Fan Speed Control (AC)
+
+For `Climate Device` / AC entries with selectable fan speeds, `Fan control` decides how RoomMind drives the fan **while actively heating or cooling**:
+
+- **Off** — leave the fan under the device/firmware's own control (legacy behavior).
+- **Fixed** — always force one speed (e.g. `High` so cool air reaches a distant floor sensor).
+- **Auto** — adapt the speed to demand. RoomMind walks a ladder of the device's speeds (weakest → strongest, the device's own `Auto` is excluded): it steps **up** when the optimizer is asking for near-full power yet the room still hasn't reached target, and steps **down** (toward the quietest speed) when demand is low or the room is already at/below target. `Min`/`Max fan speed` bound the ladder — e.g. minimum `Mute` for a quiet night and maximum `High` to cap noise.
+
+Auto escalation reacts faster than it backs off, to avoid the fan hunting. The speed RoomMind chooses while idle is governed separately by the idle `Fan speed` setting.
+
+## Schedule-Driven Idle Behavior
+
+The idle action can be overridden per schedule slot, so a room can idle differently by time of day (for example fully **off** overnight for silence, **fan only** during the day for circulation).
+
+Add an `idle_action` key (and optionally `idle_fan_mode`) to a schedule block's additional data in the Home Assistant schedule helper — the same place per-block `heat_temperature` / `cool_temperature` are set:
+
+- `idle_action`: `off`, `fan_only`, `setback`, or `low`
+- `idle_fan_mode` (optional): the fan speed to use when `idle_action` is `fan_only`
+
+When the active block carries an `idle_action`, it replaces each device's configured idle behavior **only where the action is valid for that device type** (e.g. `fan_only` applies to ACs, `low` applies to TRVs); other devices keep their own configuration. Blocks without an `idle_action` key leave the per-device idle settings unchanged.
+
 ## Smart Source Selection
 
 `Smart source selection` only appears when a room has:

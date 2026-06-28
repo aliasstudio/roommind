@@ -164,6 +164,30 @@ def resolve_targets_at_time(
     return TargetTemps(heat=eco_heat, cool=eco_cool)
 
 
+def resolve_schedule_idle(schedule_blocks: dict | None, ts: float) -> dict[str, str] | None:
+    """Return idle-action overrides from the active schedule block, or None.
+
+    Lets a schedule slot dictate how devices idle (e.g. fully ``off`` overnight
+    for silence, ``fan_only`` during the day). Reads the ``idle_action`` and
+    optional ``idle_fan_mode`` keys from the active block's ``data``. Returns
+    None when no block is active or no idle keys are present, so the per-device
+    configured idle behavior is used unchanged.
+    """
+    if schedule_blocks is None:
+        return None
+    data = find_active_block(schedule_blocks, ts)
+    if not data:
+        return None
+    action = data.get("idle_action")
+    if not action:
+        return None
+    override: dict[str, str] = {"idle_action": str(action)}
+    fan = data.get("idle_fan_mode")
+    if fan is not None:
+        override["idle_fan_mode"] = str(fan)
+    return override
+
+
 def resolve_schedule_index(
     hass: HomeAssistant,
     room: dict,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -230,3 +231,34 @@ def test_resolve_no_ladder_skips():
         compressor_forced_off=set(),
     )
     assert out == {}
+
+
+# ---------------------------------------------------------------------------
+# Coordinator._room_for_control (schedule idle override overlay)
+# ---------------------------------------------------------------------------
+
+
+def test_room_for_control_no_blocks_returns_same_object():
+    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "idle_action": "off"}]}
+    assert RoomMindCoordinator._room_for_control(SimpleNamespace(), room, None) is room
+
+
+def test_room_for_control_applies_schedule_idle():
+    import time
+
+    room = {
+        "area_id": "spalnia",
+        "devices": [
+            {"entity_id": "climate.ac1", "type": "ac", "idle_action": "off"},
+            {"entity_id": "climate.trv1", "type": "trv", "idle_action": "low"},
+        ],
+    }
+    today = datetime.fromtimestamp(time.time()).strftime("%A").lower()
+    blocks = {today: [{"from": "00:00:00", "to": "23:59:59", "data": {"idle_action": "fan_only", "idle_fan_mode": "Mute"}}]}
+    out = RoomMindCoordinator._room_for_control(SimpleNamespace(), room, blocks)
+    assert out is not room
+    assert out["devices"][0]["idle_action"] == "fan_only"
+    assert out["devices"][0]["idle_fan_mode"] == "Mute"
+    assert out["devices"][1]["idle_action"] == "low"  # TRV unaffected
+    # stored room left untouched
+    assert room["devices"][0]["idle_action"] == "off"
