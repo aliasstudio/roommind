@@ -24,6 +24,9 @@ HST_PRIORITY = {"underfloor": 2, "radiator": 1, "": 0}
 IDLE_ACTION_OFF = "off"
 IDLE_ACTION_FAN_ONLY = "fan_only"
 DEFAULT_IDLE_FAN_MODE = "low"
+# Active fan mode applied while a device is actively heating/cooling.
+# Empty string = leave the device/firmware in control (legacy behavior).
+DEFAULT_ACTIVE_FAN_MODE = ""
 IDLE_ACTION_SETBACK = "setback"
 IDLE_ACTION_LOW = "low"
 DEFAULT_IDLE_SETBACK_OFFSET = 2.0
@@ -68,6 +71,7 @@ def legacy_to_devices(
                 "heating_system_type": heating_system_type,
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
+                "active_fan_mode": DEFAULT_ACTIVE_FAN_MODE,
                 "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
             }
         )
@@ -80,6 +84,7 @@ def legacy_to_devices(
                 "heating_system_type": "",
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
+                "active_fan_mode": DEFAULT_ACTIVE_FAN_MODE,
                 "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
             }
         )
@@ -221,6 +226,19 @@ def get_idle_action(devices: list[dict], entity_id: str) -> tuple[str, str]:
         dev.get("idle_action", IDLE_ACTION_OFF),
         dev.get("idle_fan_mode", DEFAULT_IDLE_FAN_MODE),
     )
+
+
+def get_active_fan_mode(devices: list[dict], entity_id: str) -> str:
+    """Return the configured active fan mode for a device.
+
+    The active fan mode is applied while the device is actively heating or
+    cooling. An empty string (the default) means RoomMind leaves the fan
+    speed under the device/firmware's own control, preserving legacy behavior.
+    """
+    dev = get_device_by_eid(devices, entity_id)
+    if dev is None:
+        return DEFAULT_ACTIVE_FAN_MODE
+    return dev.get("active_fan_mode", DEFAULT_ACTIVE_FAN_MODE)
 
 
 def get_direct_setpoint_eids(devices: list[dict]) -> set[str]:

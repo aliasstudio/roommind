@@ -68,6 +68,7 @@ export interface DeviceConfig {
   heating_system_type?: string;
   idle_action?: "off" | "fan_only" | "setback" | "low"; // default "off"
   idle_fan_mode?: string; // default "low"
+  active_fan_mode?: string; // fan mode while actively heating/cooling; "" = leave to device (default)
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
 }
 

@@ -397,6 +397,102 @@ async def test_mpc_apply_call_hvac_off_uses_idle_action():
 
 
 # ---------------------------------------------------------------------------
+# active_fan_mode — fan speed forced while actively heating/cooling
+# ---------------------------------------------------------------------------
+
+
+def _make_ac_for_active_fan(fan_mode: str = "Auto"):
+    state = MagicMock()
+    state.state = "cool"
+    state.attributes = {
+        "hvac_modes": ["cool", "fan_only", "off"],
+        "fan_modes": ["Strong", "High", "Low", "Mute", "Auto"],
+        "fan_mode": fan_mode,
+        "temperature": 16.0,
+        "min_temp": 16.0,
+        "max_temp": 30.0,
+        "current_temperature": 24.0,
+    }
+    return state
+
+
+def _make_active_fan_ctrl(hass, active_fan_mode: str):
+    room = make_room(thermostats=[], acs=["climate.ac1"], climate_mode="cool_only")
+    room["devices"] = [
+        {
+            "entity_id": "climate.ac1",
+            "type": "ac",
+            "role": "auto",
+            "heating_system_type": "",
+            "idle_action": "off",
+            "active_fan_mode": active_fan_mode,
+            "setpoint_mode": "proportional",
+        }
+    ]
+    return MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=30.0,
+        settings={},
+        has_external_sensor=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_fan_mode_set_during_cooling():
+    """AC with active_fan_mode='High' gets set_fan_mode('High') while cooling."""
+    _last_commands.clear()
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=_make_ac_for_active_fan("Auto"))
+    ctrl = _make_active_fan_ctrl(hass, "High")
+    await ctrl.async_apply("cooling", 23.0, current_temp=24.0)
+
+    fan_calls = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_fan_mode"]
+    assert len(fan_calls) == 1
+    assert fan_calls[0][0][2] == {"entity_id": "climate.ac1", "fan_mode": "High"}
+
+
+@pytest.mark.asyncio
+async def test_active_fan_mode_redundant_skip():
+    """No set_fan_mode when the device is already at the configured speed."""
+    _last_commands.clear()
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=_make_ac_for_active_fan("High"))
+    ctrl = _make_active_fan_ctrl(hass, "High")
+    await ctrl.async_apply("cooling", 23.0, current_temp=24.0)
+
+    fan_calls = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_fan_mode"]
+    assert len(fan_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_active_fan_mode_empty_is_noop():
+    """Empty active_fan_mode (default) never sends set_fan_mode — legacy behavior."""
+    _last_commands.clear()
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=_make_ac_for_active_fan("Auto"))
+    ctrl = _make_active_fan_ctrl(hass, "")
+    await ctrl.async_apply("cooling", 23.0, current_temp=24.0)
+
+    fan_calls = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_fan_mode"]
+    assert len(fan_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_active_fan_mode_unsupported_skipped():
+    """Configured fan mode not in device fan_modes is skipped (no crash, no send)."""
+    _last_commands.clear()
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=_make_ac_for_active_fan("Auto"))
+    ctrl = _make_active_fan_ctrl(hass, "Turbo")  # not in fan_modes
+    await ctrl.async_apply("cooling", 23.0, current_temp=24.0)
+
+    fan_calls = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_fan_mode"]
+    assert len(fan_calls) == 0
+
+
+# ---------------------------------------------------------------------------
 # async_idle_device — "low" unit tests
 # ---------------------------------------------------------------------------
 

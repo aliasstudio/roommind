@@ -40,6 +40,7 @@ from ..utils.device_utils import (
     IDLE_ACTION_OFF,
     IDLE_ACTION_SETBACK,
     get_ac_eids,
+    get_active_fan_mode,
     get_direct_setpoint_eids,
     get_idle_action,
     get_trv_eids,
@@ -1313,6 +1314,7 @@ class MPCController:
                 ac_heat_target = ha_heat_target if ha_heat_target is not None else ha_cool_target
                 if ac_target is None:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
+                    continue
                 elif "heat_cool" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat_cool"})
                     # Dual-setpoint: send both targets when device uses range mode
@@ -1335,6 +1337,7 @@ class MPCController:
                             "set_temperature",
                             {"entity_id": eid, "temperature": ac_target, "hvac_mode": "heat_cool"},
                         )
+                    await self._apply_active_fan_mode(eid)
                 elif not thermostats and can_heat and can_cool and "heat" in ac_modes and "cool" in ac_modes:
                     # AC-only room, device supports heat+cool but not heat_cool:
                     # use device's built-in temperature to pick the right mode.
@@ -1354,6 +1357,7 @@ class MPCController:
                             {"entity_id": eid, "temperature": ac_heat_t, "hvac_mode": "heat"},
                             temp_intent="heat",
                         )
+                    await self._apply_active_fan_mode(eid)
                 elif can_cool and "cool" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "cool"})
                     await self._call(
@@ -1361,6 +1365,7 @@ class MPCController:
                         {"entity_id": eid, "temperature": ac_target, "hvac_mode": "cool"},
                         temp_intent="cool",
                     )
+                    await self._apply_active_fan_mode(eid)
                 elif can_heat and "heat" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
                     await self._call(
@@ -1368,6 +1373,7 @@ class MPCController:
                         {"entity_id": eid, "temperature": ac_heat_target, "hvac_mode": "heat"},
                         temp_intent="heat",
                     )
+                    await self._apply_active_fan_mode(eid)
                 elif "auto" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "auto"})
                     await self._call(
@@ -1375,6 +1381,7 @@ class MPCController:
                         {"entity_id": eid, "temperature": ac_heat_target, "hvac_mode": "auto"},
                         temp_intent="heat",
                     )
+                    await self._apply_active_fan_mode(eid)
                 else:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
             return
@@ -1476,6 +1483,7 @@ class MPCController:
                                 temp_intent="heat",
                                 deadband=self._proportional_deadband(cmd.entity_id, current_temp, effective_target),
                             )
+                            await self._apply_active_fan_mode(cmd.entity_id)
                         else:
                             await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "off"})
                 else:
@@ -1561,6 +1569,7 @@ class MPCController:
                         temp_intent="heat",
                         deadband=self._proportional_deadband(eid, current_temp, effective_target),
                     )
+                    await self._apply_active_fan_mode(eid)
                 else:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
         elif mode == MODE_COOLING:
@@ -1587,6 +1596,7 @@ class MPCController:
                     temp_intent="cool",
                     deadband=self._proportional_deadband(eid, current_temp, effective_target),
                 )
+                await self._apply_active_fan_mode(eid)
             for eid in thermostats:
                 if eid in _forced_off:
                     await async_idle_device(self.hass, eid, self._devices, area_id=self._area_id, targets=targets)
@@ -1657,6 +1667,32 @@ class MPCController:
         if abs(current_temp - effective_target) <= 1.0:
             return PROPORTIONAL_DEADBAND_NEAR_TARGET_C
         return PROPORTIONAL_DEADBAND_C
+
+    async def _apply_active_fan_mode(self, eid: str) -> None:
+        """Apply the configured active fan mode while a device heats/cools.
+
+        No-op when no ``active_fan_mode`` is configured (empty = leave the
+        device/firmware in control, preserving prior behavior). Unsupported
+        modes and redundant sends are skipped so the AC is not spammed every
+        control cycle.
+        """
+        fan_mode = get_active_fan_mode(self._devices, eid)
+        if not fan_mode:
+            return
+        state = self.hass.states.get(eid)
+        fan_modes: list[str] = (state.attributes.get("fan_modes") or []) if state else []
+        if fan_mode not in fan_modes:
+            _LOGGER.debug(
+                "Area '%s': device '%s' does not support active fan_mode '%s' (available: %s)",
+                self._area_id,
+                eid,
+                fan_mode,
+                fan_modes,
+            )
+            return
+        if state and state.attributes.get("fan_mode") == fan_mode:
+            return
+        await self._call("set_fan_mode", {"entity_id": eid, "fan_mode": fan_mode})
 
     async def _call(self, service: str, data: dict, *, temp_intent: str = "", deadband: float | None = None) -> None:
         eid = data.get("entity_id")

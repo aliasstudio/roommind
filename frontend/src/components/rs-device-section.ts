@@ -722,6 +722,37 @@ export class RsDeviceSection extends LitElement {
                   </ha-select>
                 </div>`
               : nothing}
+            ${((entityState?.attributes?.fan_modes ?? []) as string[]).length > 0
+              ? html`<div class="detail-field with-info">
+                  <ha-select
+                    .label=${localize("devices.active_fan_mode", lang)}
+                    .value=${device.active_fan_mode ? device.active_fan_mode : "__keep__"}
+                    .options=${[
+                      { value: "__keep__", label: localize("devices.active_fan_mode_keep", lang) },
+                      ...((entityState?.attributes?.fan_modes ?? []) as string[]).map((fm) => ({
+                        value: fm,
+                        label: fm,
+                      })),
+                    ]}
+                    @selected=${(e: Event) => {
+                      const v = getSelectValue(e);
+                      this._onActiveFanModeChange(entityId, v === "__keep__" ? "" : v!);
+                    }}
+                    @closed=${(e: Event) => e.stopPropagation()}
+                    fixedMenuPosition
+                  >
+                    <ha-list-item value="__keep__"
+                      >${localize("devices.active_fan_mode_keep", lang)}</ha-list-item
+                    >
+                    ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                      (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
+                    )}
+                  </ha-select>
+                  <rs-info-icon
+                    .text=${localize("devices.active_fan_mode_hint", lang)}
+                  ></rs-info-icon>
+                </div>`
+              : nothing}
           `
         : nothing}
       ${isThermostat
@@ -878,6 +909,13 @@ export class RsDeviceSection extends LitElement {
   private _onIdleFanModeChange(entityId: string, fanMode: string): void {
     const newDevices = this.devices.map((d) =>
       d.entity_id === entityId ? { ...d, idle_fan_mode: fanMode } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onActiveFanModeChange(entityId: string, fanMode: string): void {
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, active_fan_mode: fanMode } : d,
     );
     this._fireDeviceChanged(newDevices);
   }
