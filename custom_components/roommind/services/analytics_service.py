@@ -68,6 +68,7 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
                 "blind_position": _safe_int(row.get("blind_position", "")),
                 "cover_reason": row.get("cover_reason", ""),
                 "device_setpoint": _safe_float(row.get("device_setpoint", "")),
+                "fan_mode": row.get("fan_mode", "") or None,
             }
         )
     return result

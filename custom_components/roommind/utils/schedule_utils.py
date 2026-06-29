@@ -188,6 +188,28 @@ def resolve_schedule_idle(schedule_blocks: dict | None, ts: float) -> dict[str, 
     return override
 
 
+def resolve_schedule_fan(schedule_blocks: dict | None, ts: float) -> dict[str, str] | None:
+    """Return fan-control overrides from the active schedule block, or None.
+
+    Lets a schedule slot cap or steer the AC fan (e.g. ``fan_max_mode: Low``
+    overnight so active cooling stays quiet). Reads any of ``fan_control``,
+    ``fan_min_mode`` and ``fan_max_mode`` from the active block's ``data``.
+    Returns only the keys that are present, or None when none are, so the
+    per-device fan configuration is otherwise used unchanged.
+    """
+    if schedule_blocks is None:
+        return None
+    data = find_active_block(schedule_blocks, ts)
+    if not data:
+        return None
+    override: dict[str, str] = {}
+    for key in ("fan_control", "fan_min_mode", "fan_max_mode"):
+        val = data.get(key)
+        if val:
+            override[key] = str(val)
+    return override or None
+
+
 def resolve_schedule_index(
     hass: HomeAssistant,
     room: dict,

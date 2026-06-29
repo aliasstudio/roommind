@@ -299,6 +299,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 # current timestamp — this compares "what the model
                 # predicted would happen" vs "what actually happened".
                 predicted = self._pending_predictions.pop(area_id, None)
+                # Record the AC's live fan speed (first AC in the room) so the
+                # chosen/auto-escalated speed shows up in analytics over time.
+                fan_mode = ""
+                for _ac_eid in get_ac_eids(rooms.get(area_id, {}).get("devices", [])):
+                    _ac_state = self.hass.states.get(_ac_eid)
+                    if _ac_state and _ac_state.attributes.get("fan_mode"):
+                        fan_mode = str(_ac_state.attributes["fan_mode"])
+                        break
                 try:
                     await self.hass.async_add_executor_job(
                         self._history_store.record,
@@ -316,6 +324,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "cover_reason": rs.get("cover_reason", ""),
                             "device_setpoint": rs.get("device_setpoint"),
                             "occupancy": rs.get("q_occupancy", 0.0) > 0,
+                            "fan_mode": fan_mode,
                         },
                     )
                 except Exception:  # noqa: BLE001
@@ -876,6 +885,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
         else:
             # --- Auto fan-speed escalation (per AC device, opt-in) ---
+            from .utils.schedule_utils import resolve_schedule_fan
+
+            schedule_fan = resolve_schedule_fan(schedule_blocks, time.time())
             fan_overrides = self._resolve_fan_overrides(
                 room=room,
                 mode=mode,
@@ -887,6 +899,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 force_off=force_off,
                 cycling_eids=cycling_eids,
                 compressor_forced_off=compressor_forced_off,
+                schedule_fan=schedule_fan,
             )
             try:
                 await controller.async_apply(
@@ -1059,6 +1072,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         force_off: bool,
         cycling_eids: set[str],
         compressor_forced_off: set[str],
+        schedule_fan: dict[str, str] | None = None,
     ) -> dict[str, str]:
         """Resolve auto-escalated fan modes for AC devices configured fan_control='auto'.
 
@@ -1067,12 +1081,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         (the controller handles 'fixed' from static config). The escalation is
         evaluated even while idle so the ladder state stays warm, but idle
         cycles return no override (idle fan handling is per idle_action).
+
+        A *schedule_fan* override (from the active schedule block) takes
+        precedence over the per-device fan config, letting a slot cap the speed
+        by time of day (e.g. ``fan_max_mode: Low`` overnight for quiet cooling).
         """
         overrides: dict[str, str] = {}
         devices = room.get("devices", [])
         ac_eids = get_ac_eids(devices)
         if not ac_eids:
             return overrides
+
+        sched = schedule_fan or {}
 
         # The active flag gates *escalation*; idle still ticks the state machine.
         is_active_mode = mode in (MODE_COOLING, MODE_HEATING)
@@ -1087,6 +1107,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         for eid in ac_eids:
             fan_control, min_label, max_label = get_fan_control(devices, eid)
+            # Schedule overrides win over the per-device fan config.
+            fan_control = sched.get("fan_control", fan_control)
+            min_label = sched.get("fan_min_mode", min_label)
+            max_label = sched.get("fan_max_mode", max_label)
             if fan_control != FAN_CONTROL_AUTO:
                 self._fan_speed_manager.reset(eid)
                 continue

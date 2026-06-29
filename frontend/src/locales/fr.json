@@ -417,6 +417,7 @@
   "analytics.export": "Mesures",
   "analytics.heating_period": "Chauffage",
   "analytics.cooling_period": "Refroidissement",
+  "analytics.fan_speed": "Vitesse du ventilateur",
   "analytics.blind_position": "Position du store",
   "analytics.window_open_period": "Fenêtre ouverte",
   "analytics.chart_info_title": "Comment lire ce graphique",

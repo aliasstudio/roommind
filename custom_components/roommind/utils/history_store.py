@@ -23,6 +23,7 @@ DETAIL_FIELDS = [
     "cover_reason",
     "device_setpoint",
     "occupancy",
+    "fan_mode",
 ]
 DETAIL_MAX_AGE = 48 * 3600  # 48 hours
 HISTORY_MAX_AGE = 90 * 24 * 3600  # 90 days
@@ -88,6 +89,7 @@ class HistoryStore:
                     "cover_reason": data.get("cover_reason", ""),
                     "device_setpoint": data.get("device_setpoint", ""),
                     "occupancy": data.get("occupancy", ""),
+                    "fan_mode": data.get("fan_mode", ""),
                 }
             )
 
@@ -201,6 +203,7 @@ class HistoryStore:
                 "mode": bucket[0]["mode"],
                 "window_open": bucket[0].get("window_open", ""),
                 "device_setpoint": bucket[0].get("device_setpoint", ""),
+                "fan_mode": bucket[0].get("fan_mode", ""),
             }
             for field in (
                 "room_temp",

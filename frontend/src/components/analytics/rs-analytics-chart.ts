@@ -56,7 +56,7 @@ export class RsAnalyticsChart extends LitElement {
         }
         return hidden;
       }
-      if (!isEvent && id !== "now_marker") {
+      if (!isEvent && id !== "now_marker" && id !== "fan_speed") {
         for (const point of s.data as Array<[number, number]>) {
           if (point && point[1] != null) {
             visibleY.push(point[1]);

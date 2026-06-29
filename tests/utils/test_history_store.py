@@ -33,6 +33,40 @@ def test_write_and_read(history_dir):
     assert rows[0]["room_temp"] == "21.0"
 
 
+def test_fan_mode_in_csv(history_dir):
+    """fan_mode is persisted and read back from the detail CSV."""
+    store = HistoryStore(history_dir)
+    store.record(
+        "spalnia",
+        {
+            "room_temp": 24.0,
+            "outdoor_temp": 26.0,
+            "target_temp": 24.0,
+            "mode": "cooling",
+            "predicted_temp": 24.1,
+            "fan_mode": "Low",
+        },
+    )
+    rows = store.read_detail("spalnia")
+    assert len(rows) == 1
+    assert rows[0]["fan_mode"] == "Low"
+
+
+def test_downsample_preserves_fan_mode(history_dir):
+    """Rotation downsampling keeps the first fan_mode of each bucket."""
+    store = HistoryStore(history_dir)
+    old_ts = time.time() - (50 * 3600)  # older than DETAIL_MAX_AGE (48h)
+    store.record(
+        "spalnia",
+        {"room_temp": 24.0, "outdoor_temp": 26.0, "target_temp": 24.0, "mode": "cooling", "fan_mode": "Strong"},
+        timestamp=old_ts,
+    )
+    store.rotate("spalnia")
+    history = store.read_history("spalnia")
+    assert len(history) == 1
+    assert history[0]["fan_mode"] == "Strong"
+
+
 def test_multiple_rooms(history_dir):
     """Each room has separate CSV files."""
     store = HistoryStore(history_dir)

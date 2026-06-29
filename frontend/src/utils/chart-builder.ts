@@ -8,6 +8,52 @@ import type { HomeAssistant } from "../types";
 
 const FORECAST_MS = 3 * 3600_000;
 
+// Coarse strength ranking for fan-mode labels (mirrors the backend ladder).
+// Maps a label to a 1..7 level for the stepped fan-speed series; ungraded
+// labels (Auto, Diffuse…) return null and are not plotted.
+const FAN_RANK_TOKENS: Array<[string, number]> = [
+  ["mid-high", 5],
+  ["medium-high", 5],
+  ["mid-low", 3],
+  ["medium-low", 3],
+  ["silent", 1],
+  ["mute", 1],
+  ["quiet", 1],
+  ["night", 1],
+  ["sleep", 1],
+  ["turbo", 7],
+  ["strong", 7],
+  ["powerful", 7],
+  ["boost", 7],
+  ["max", 7],
+  ["high", 6],
+  ["medium", 4],
+  ["mid", 4],
+  ["low", 2],
+  ["min", 2],
+];
+const FAN_EXCLUDE = ["auto", "diffuse", "natural"];
+
+export function fanRank(label: string): number | null {
+  const low = label.trim().toLowerCase();
+  if (!low || FAN_EXCLUDE.some((t) => low.includes(t))) return null;
+  for (const [tok, score] of FAN_RANK_TOKENS) {
+    if (low.includes(tok)) return score;
+  }
+  return null;
+}
+
+/** Map each fan level present in the data to a representative label for axis ticks. */
+export function fanLevelNames(points: AnalyticsDataPoint[]): Map<number, string> {
+  const names = new Map<number, string>();
+  for (const p of points) {
+    if (!p.fan_mode) continue;
+    const rank = fanRank(p.fan_mode);
+    if (rank !== null && !names.has(rank)) names.set(rank, p.fan_mode);
+  }
+  return names;
+}
+
 export interface ChartBuildContext {
   hass: HomeAssistant;
   language: string;
@@ -198,6 +244,28 @@ export function buildChartSeries(
     });
   }
 
+  // Fan-speed stepped line on the secondary (right) axis
+  const fanData: Array<[number, number]> = [];
+  for (const p of points) {
+    if (!p.fan_mode) continue;
+    const rank = fanRank(p.fan_mode);
+    if (rank !== null) fanData.push([p.ts * 1000, rank]);
+  }
+  if (fanData.length > 0) {
+    series.push({
+      id: "fan_speed",
+      type: "line",
+      name: localize("analytics.fan_speed", l),
+      color: "rgb(156, 39, 176)",
+      data: fanData,
+      showSymbol: false,
+      step: "end",
+      smooth: false,
+      lineStyle: { width: 1.5 },
+      yAxisIndex: 1,
+    });
+  }
+
   // "Now" vertical marker line
   series.push({
     id: "now_marker",
@@ -246,13 +314,35 @@ export function buildChartOptions(
 
   const isLive = Math.abs(rangeEnd - Date.now()) < 3600_000;
 
+  // Secondary axis for the stepped fan-speed series, with speed names as ticks.
+  const fanNames = fanLevelNames(points);
+  let yAxisOpt: unknown = yAxis;
+  if (fanNames.size > 0) {
+    const maxLevel = Math.max(...fanNames.keys());
+    yAxisOpt = [
+      yAxis,
+      {
+        type: "value",
+        position: "right",
+        min: 0.5,
+        max: maxLevel + 0.5,
+        interval: 1,
+        splitLine: { show: false },
+        axisLabel: {
+          formatter: (v: number) => fanNames.get(v) ?? "",
+          fontSize: 10,
+        },
+      },
+    ];
+  }
+
   return {
     xAxis: {
       type: "time",
       min: rangeStart,
       max: isLive ? chartAnchor + FORECAST_MS : rangeEnd,
     },
-    yAxis,
+    yAxis: yAxisOpt,
     dataZoom: [
       {
         type: "inside",
@@ -326,6 +416,9 @@ export function buildChartOptions(
             }
             if (closest.blind_position != null) {
               markup += `<div style="color:rgba(255,255,255,0.7)">${localize("analytics.blind_position", l)} ${100 - closest.blind_position}%</div>`;
+            }
+            if (closest.fan_mode) {
+              markup += `<div style="color:rgba(255,255,255,0.7)">${localize("analytics.fan_speed", l)}: ${closest.fan_mode}</div>`;
             }
           }
         }

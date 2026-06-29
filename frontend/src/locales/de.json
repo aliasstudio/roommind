@@ -417,6 +417,7 @@
   "analytics.export": "Messdaten",
   "analytics.heating_period": "Heizen",
   "analytics.cooling_period": "Kühlung",
+  "analytics.fan_speed": "Lüftergeschwindigkeit",
   "analytics.window_open_period": "Fenster offen",
   "analytics.blind_position": "Rolloposition",
   "analytics.chart_info_title": "So liest du dieses Diagramm",

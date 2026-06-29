@@ -247,6 +247,7 @@ export interface AnalyticsDataPoint {
   blind_position?: number | null;
   cover_reason?: string;
   device_setpoint?: number | null;
+  fan_mode?: string | null;
 }
 
 export interface AnalyticsData {

@@ -64,6 +64,7 @@ def test_legacy_to_devices_basic():
         "heating_system_type": "",
         "idle_action": "off",
         "idle_fan_mode": "low",
+        "active_fan_mode": "",
         "setpoint_mode": "proportional",
     }
     assert devices[2]["type"] == "ac"

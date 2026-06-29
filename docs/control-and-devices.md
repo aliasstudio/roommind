@@ -138,6 +138,31 @@ Add an `idle_action` key (and optionally `idle_fan_mode`) to a schedule block's 
 
 When the active block carries an `idle_action`, it replaces each device's configured idle behavior **only where the action is valid for that device type** (e.g. `fan_only` applies to ACs, `low` applies to TRVs); other devices keep their own configuration. Blocks without an `idle_action` key leave the per-device idle settings unchanged.
 
+### Capping fan speed by time of day
+
+The same schedule block data can cap or steer the **auto fan control** so active cooling stays quiet at night while still allowed to ramp up during the day:
+
+- `fan_max_mode`: strongest speed the auto ladder may use during this block (e.g. `Low` overnight)
+- `fan_min_mode`: weakest speed during this block
+- `fan_control`: `off` / `fixed` / `auto` to switch the strategy for this block
+
+These override the device's `Fan control` settings while the block is active. A tighter `fan_max_mode` takes effect immediately — if the fan had already escalated to a higher speed, it drops to the cap on the next cycle rather than waiting for the usual step-down delay. The device must be in (or switched by the schedule to) `auto` for the bounds to apply.
+
+Example — silent night, lively day:
+
+```yaml
+- from: "23:00:00"
+  to: "07:00:00"
+  data:
+    temperature: 24
+    fan_max_mode: "Low"     # cool quietly while sleeping
+- from: "07:00:00"
+  to: "23:00:00"
+  data:
+    temperature: 23
+    fan_max_mode: "Strong"  # full power available by day
+```
+
 ## Smart Source Selection
 
 `Smart source selection` only appears when a room has:

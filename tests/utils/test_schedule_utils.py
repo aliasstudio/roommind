@@ -18,6 +18,7 @@ from custom_components.roommind.utils.schedule_utils import (
     get_active_schedule_entity,
     make_target_resolver,
     read_schedule_blocks,
+    resolve_schedule_fan,
     resolve_schedule_idle,
     resolve_schedule_index,
     resolve_target_at_time,
@@ -62,6 +63,47 @@ def test_resolve_schedule_idle_no_active_block():
     blocks = {"tuesday": [{"from": "00:00:00", "to": "23:59:59", "data": {"idle_action": "off"}}]}
     # Monday timestamp, only tuesday defined -> no active block
     assert resolve_schedule_idle(blocks, _MON_DAY) is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_schedule_fan
+# ---------------------------------------------------------------------------
+
+_FAN_BLOCKS = {
+    "monday": [
+        {"from": "00:00:00", "to": "09:00:00", "data": {"temperature": 24, "fan_max_mode": "Low"}},
+        {"from": "09:00:00", "to": "23:59:59", "data": {"temperature": 22}},
+    ]
+}
+
+
+def test_resolve_schedule_fan_none_blocks():
+    assert resolve_schedule_fan(None, _MON_DAY) is None
+
+
+def test_resolve_schedule_fan_night_cap():
+    assert resolve_schedule_fan(_FAN_BLOCKS, _MON_NIGHT) == {"fan_max_mode": "Low"}
+
+
+def test_resolve_schedule_fan_day_no_keys():
+    assert resolve_schedule_fan(_FAN_BLOCKS, _MON_DAY) is None
+
+
+def test_resolve_schedule_fan_all_keys():
+    blocks = {
+        "monday": [
+            {
+                "from": "00:00:00",
+                "to": "23:59:59",
+                "data": {"fan_control": "auto", "fan_min_mode": "Mute", "fan_max_mode": "Low"},
+            }
+        ]
+    }
+    assert resolve_schedule_fan(blocks, _MON_NIGHT) == {
+        "fan_control": "auto",
+        "fan_min_mode": "Mute",
+        "fan_max_mode": "Low",
+    }
 
 # ---------------------------------------------------------------------------
 # Helpers

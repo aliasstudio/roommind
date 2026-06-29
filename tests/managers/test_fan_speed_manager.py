@@ -195,6 +195,53 @@ def test_resolve_window_open_no_override():
     assert out == {}
 
 
+def test_resolve_schedule_fan_caps_max_immediately():
+    """A schedule fan_max_mode cap pulls a high level down at once (no dwell wait)."""
+    fake = _fake_coordinator(LADDER_LABELS)
+    fake._fan_speed_manager._level["climate.ac1"] = LADDER.index("Strong")  # currently maxed
+    room = {
+        "devices": [
+            {"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto", "fan_min_mode": "Mute", "fan_max_mode": "Strong"}
+        ]
+    }
+    out = _resolve(
+        fake,
+        room=room,
+        mode="cooling",
+        current_temp=24.3,
+        targets=TargetTemps(heat=20.0, cool=24.0),
+        power_fraction=1.0,
+        climate_active=True,
+        window_open=False,
+        force_off=False,
+        cycling_eids=set(),
+        compressor_forced_off=set(),
+        schedule_fan={"fan_max_mode": "Low"},
+    )
+    assert out == {"climate.ac1": "Low"}
+
+
+def test_resolve_schedule_fan_control_off_disables():
+    """A schedule fan_control='off' suppresses auto override for that slot."""
+    fake = _fake_coordinator(LADDER_LABELS)
+    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}]}
+    out = _resolve(
+        fake,
+        room=room,
+        mode="cooling",
+        current_temp=25.0,
+        targets=TargetTemps(heat=20.0, cool=23.0),
+        power_fraction=1.0,
+        climate_active=True,
+        window_open=False,
+        force_off=False,
+        cycling_eids=set(),
+        compressor_forced_off=set(),
+        schedule_fan={"fan_control": "off"},
+    )
+    assert out == {}
+
+
 def test_resolve_idle_no_override():
     fake = _fake_coordinator(LADDER_LABELS)
     room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}]}
