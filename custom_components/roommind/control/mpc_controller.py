@@ -24,11 +24,15 @@ from ..const import (
     DEFAULT_OUTDOOR_COOLING_MIN,
     DEFAULT_OUTDOOR_HEATING_MAX,
     HEATING_BOOST_TARGET,
+    HEATING_SYSTEM_PROFILES,
+    MIN_OFF_MINUTES,
     MODE_COOLING,
     MODE_HEATING,
     MODE_IDLE,
     PROPORTIONAL_DEADBAND_C,
     PROPORTIONAL_DEADBAND_NEAR_TARGET_C,
+    START_DEADBAND_MAX_C,
+    START_DEADBAND_MIN_C,
     TargetTemps,
     is_override_active,
     make_roommind_context,
@@ -735,6 +739,7 @@ class MPCController:
         q_residual: float = 0.0,
         heating_system_type: str = "",
         mode_on_since: float | None = None,
+        off_since: float | None = None,
         shading_factor: float = 1.0,
         q_occupancy: float = 0.0,
     ) -> None:
@@ -760,6 +765,7 @@ class MPCController:
         self.q_residual = q_residual
         self._heating_system_type = heating_system_type
         self._mode_on_since = mode_on_since
+        self._off_since = off_since
         self._shading_factor = shading_factor
         self.q_occupancy = q_occupancy
         self._idle_targets: TargetTemps | None = None
@@ -776,6 +782,10 @@ class MPCController:
         self._w_comfort = max(1.0, cw / 10.0)
         self._w_energy = max(1.0, (100 - cw) / 10.0)
         self._approach_rate = min(1.0, APPROACH_RATE_MIN + (1.0 - APPROACH_RATE_MIN) * cw / DEFAULT_COMFORT_WEIGHT)
+        # Anti-short-cycle start hysteresis: wide at full efficiency (cw=0), tight at comfort end.
+        self._start_deadband = START_DEADBAND_MIN_C + (START_DEADBAND_MAX_C - START_DEADBAND_MIN_C) * (
+            1.0 - min(1.0, cw / DEFAULT_COMFORT_WEIGHT)
+        )
         self._ac_boost_delta = min(
             AC_BOOST_DELTA_MAX,
             AC_BOOST_DELTA_MIN + (AC_BOOST_DELTA_MAX - AC_BOOST_DELTA_MIN) * cw / DEFAULT_COMFORT_WEIGHT,
@@ -851,6 +861,16 @@ class MPCController:
             return False
         min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
+
+    def _within_min_off(self) -> bool:
+        """Return True if the room is idle and still inside the minimum-off window.
+
+        Symmetric to ``_within_min_run``: after a compressor idles, suppress
+        re-activation for ``MIN_OFF_MINUTES`` to stop short-cycling an inverter.
+        """
+        if self.previous_mode != MODE_IDLE or self._off_since is None:
+            return False
+        return (time.time() - self._off_since) < MIN_OFF_MINUTES * 60
 
     def _predict_idle_drift(self, current_temp: float, dt_minutes: float) -> float:
         """Predict room temperature assuming no active HVAC over *dt_minutes*.
@@ -1007,6 +1027,30 @@ class MPCController:
                 action = MODE_IDLE
                 power_fraction = 0.0
 
+        # Start hysteresis + minimum-off guard: when starting a fresh run from
+        # idle, require the room to drift past target by `_start_deadband` and
+        # honor the minimum-off window — this stops short-cycling a fast device
+        # (e.g. an inverter AC) near target. An emergency excursion (already, or
+        # predicted to be, past target by more than the hard ceiling) bypasses
+        # both so a real runaway is never trapped. Slow heating systems with a
+        # response profile (e.g. underfloor) are exempt for HEATING: they rely on
+        # proactive pre-heating, which this hysteresis would otherwise defeat.
+        has_heat_profile = bool(HEATING_SYSTEM_PROFILES.get(self._heating_system_type))
+        if action != MODE_IDLE and self.previous_mode == MODE_IDLE:
+            predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
+            if action == MODE_HEATING and near_heat and not has_heat_profile:
+                tgt = max(near_heat)
+                emergency = current_temp <= tgt - HARD_OVERSHOOT_CEILING or predicted <= tgt - HARD_OVERSHOOT_CEILING
+                if not emergency and (current_temp > tgt - self._start_deadband or self._within_min_off()):
+                    action = MODE_IDLE
+                    power_fraction = 0.0
+            elif action == MODE_COOLING and near_cool:
+                tgt = min(near_cool)
+                emergency = current_temp >= tgt + HARD_OVERSHOOT_CEILING or predicted >= tgt + HARD_OVERSHOOT_CEILING
+                if not emergency and (current_temp < tgt + self._start_deadband or self._within_min_off()):
+                    action = MODE_IDLE
+                    power_fraction = 0.0
+
         return action, power_fraction
 
     def _evaluate_bangbang(
@@ -1033,7 +1077,11 @@ class MPCController:
                 return MODE_COOLING
             return MODE_IDLE
 
-        # From idle: threshold to start
+        # From idle: threshold to start (suppressed during the minimum-off window
+        # so the fallback path also avoids short-cycling).
+        if self._within_min_off():
+            return MODE_IDLE
+
         if can_heat and heat_target is not None and current_temp < heat_target - BANGBANG_HEAT_HYSTERESIS:
             return MODE_HEATING
 

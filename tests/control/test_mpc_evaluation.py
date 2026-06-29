@@ -562,6 +562,7 @@ def test_safety_guard_allows_heating_when_prediction_dips(monkeypatch):
         outdoor_temp=5.0,
         settings={},
         has_external_sensor=True,
+        previous_mode=MODE_HEATING,  # ongoing run: tests the guard's continuation allow-path
     )
 
     fake_plan = MPCPlan(
@@ -662,6 +663,7 @@ def test_safety_guard_allows_cooling_when_prediction_rises(monkeypatch):
         settings={},
         has_external_sensor=True,
         q_solar=0.5,
+        previous_mode=MODE_COOLING,  # ongoing run: tests the guard's continuation allow-path
     )
 
     fake_plan = MPCPlan(
@@ -989,3 +991,100 @@ def test_mpc_guard_horizon_extended_for_ufh(monkeypatch):
     )
     mode, _ = ctrl._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_HEATING, "Extended guard horizon for UFH should allow heating at mild outdoor=19°C"
+
+
+# ---------------------------------------------------------------------------
+# Anti-short-cycle: start hysteresis + minimum-off guard
+# ---------------------------------------------------------------------------
+
+
+def _force_cooling(monkeypatch):
+    """Make the optimizer always recommend COOLING so the gate can be tested."""
+    fake_plan = MPCPlan(
+        actions=[MODE_COOLING] * 6,
+        temperatures=[23.0] * 7,
+        power_fractions=[0.8] * 6,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+
+
+def _cool_ctrl(hass, mgr, *, settings=None, previous_mode=MODE_IDLE, off_since=None):
+    return MPCController(
+        hass,
+        make_room(acs=["climate.ac1"], thermostats=[], climate_mode="cool_only"),
+        model_manager=mgr,
+        outdoor_temp=23.0,  # ≈ room temp → no large idle drift → no emergency bypass
+        settings=settings if settings is not None else {},
+        has_external_sensor=True,
+        previous_mode=previous_mode,
+        off_since=off_since,
+    )
+
+
+def test_start_deadband_suppresses_cooling_just_above_target(monkeypatch):
+    """From idle, a tiny excursion (+0.1°) must NOT start cooling."""
+    _force_cooling(monkeypatch)
+    ctrl = _cool_ctrl(build_hass(), RoomModelManager())  # default cw=70 → deadband 0.15
+    mode, pf = ctrl._evaluate_mpc(23.1, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_IDLE
+    assert pf == 0.0
+
+
+def test_start_deadband_allows_cooling_past_band(monkeypatch):
+    """From idle, an excursion beyond the deadband starts cooling."""
+    _force_cooling(monkeypatch)
+    ctrl = _cool_ctrl(build_hass(), RoomModelManager())
+    mode, pf = ctrl._evaluate_mpc(23.6, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_COOLING
+    assert pf > 0.0
+
+
+def test_min_off_suppresses_restart_within_window(monkeypatch):
+    """A fresh cooling start is blocked while inside the minimum-off window."""
+    _force_cooling(monkeypatch)
+    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), off_since=time.time() - 60)  # 1 min ago
+    # 23.6 is past the deadband, but min-off still holds it idle (no emergency).
+    mode, pf = ctrl._evaluate_mpc(23.6, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_IDLE
+    assert pf == 0.0
+
+
+def test_min_off_expires_allows_restart(monkeypatch):
+    """After the minimum-off window elapses, cooling may restart."""
+    _force_cooling(monkeypatch)
+    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), off_since=time.time() - 11 * 60)  # past 10 min
+    mode, pf = ctrl._evaluate_mpc(23.6, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_COOLING
+    assert pf > 0.0
+
+
+def test_emergency_overshoot_bypasses_min_off(monkeypatch):
+    """A large excursion (>= hard ceiling) cools immediately despite min-off."""
+    _force_cooling(monkeypatch)
+    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), off_since=time.time() - 60)
+    # 24.0 is target + 1.0°C (HARD_OVERSHOOT_CEILING) → emergency bypass.
+    mode, pf = ctrl._evaluate_mpc(24.0, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_COOLING
+    assert pf > 0.0
+
+
+def test_ongoing_cooling_run_not_gated(monkeypatch):
+    """The start gate only fires from idle — an ongoing run is untouched."""
+    _force_cooling(monkeypatch)
+    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), previous_mode=MODE_COOLING)
+    # Within the deadband and within a (hypothetical) min-off, but already cooling.
+    mode, pf = ctrl._evaluate_mpc(23.1, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_COOLING
+    assert pf > 0.0
+
+
+def test_start_deadband_scales_with_comfort_weight():
+    """Deadband is tight at the comfort end and wide at the efficiency end."""
+    hass = build_hass()
+    mgr = RoomModelManager()
+    assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 70})._start_deadband == pytest.approx(0.15)
+    assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 40})._start_deadband == pytest.approx(0.493, abs=0.01)
+    assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 0})._start_deadband == pytest.approx(0.95)

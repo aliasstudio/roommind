@@ -185,6 +185,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._entity_areas: set[str] = set()
         # Min-run enforcement: timestamp when current non-idle mode started
         self._mode_on_since: dict[str, float] = {}
+        # Min-off (anti-short-cycle): timestamp when the room last went idle
+        self._off_since: dict[str, float] = {}
         # Sensor dropout fallback: last valid temperature per room
         self._last_valid_temps: dict[str, tuple[float, float]] = {}  # {area_id: (celsius, monotonic_ts)}
         # Startup guard: rooms with at least one valid temperature reading since
@@ -688,6 +690,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             settings=settings,
             previous_mode=self._previous_modes.get(area_id, MODE_IDLE),
             mode_on_since=self._mode_on_since.get(area_id),
+            off_since=self._off_since.get(area_id),
             has_external_sensor=has_external_sensor,
             target_resolver=target_resolver,
             q_solar=self._current_q_solar,
@@ -1297,8 +1300,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         _prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
         if mode != MODE_IDLE and _prev_mode != mode:
             self._mode_on_since[area_id] = time.time()
+            self._off_since.pop(area_id, None)
         elif mode == MODE_IDLE:
             self._mode_on_since.pop(area_id, None)
+            if _prev_mode != MODE_IDLE:
+                self._off_since[area_id] = time.time()
         self._previous_modes[area_id] = mode
 
         # Compute display mode: show actual device state when RoomMind doesn't
@@ -1870,6 +1876,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._cover_orchestrator.remove_room(area_id)
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)
+        self._off_since.pop(area_id, None)
         self._switch_entity_areas.discard(area_id)
         self._climate_control_switch_areas.discard(area_id)
         self._binary_sensor_entity_areas.discard(area_id)
