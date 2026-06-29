@@ -70,12 +70,14 @@ from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
 from .utils.device_utils import (
     FAN_CONTROL_AUTO,
+    IDLE_ACTION_SETBACK,
     apply_idle_override,
     build_rooms_devices_map,
     get_ac_eids,
     get_all_entity_ids,
     get_direct_setpoint_eids,
     get_fan_control,
+    get_idle_action,
     get_trv_eids,
     order_fan_modes,
     room_contributes_to_group,
@@ -889,7 +891,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
             schedule_fan = resolve_schedule_fan(schedule_blocks, time.time())
             fan_overrides = self._resolve_fan_overrides(
-                room=room,
+                room=room_for_control,
                 mode=mode,
                 current_temp=current_temp,
                 targets=targets,
@@ -1074,13 +1076,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         compressor_forced_off: set[str],
         schedule_fan: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Resolve auto-escalated fan modes for AC devices configured fan_control='auto'.
+        """Resolve proportional fan modes for AC devices configured fan_control='auto'.
 
         Returns a {entity_id: fan_mode} map for devices whose speed RoomMind
-        should drive this cycle. Devices set to 'off'/'fixed' are not included
-        (the controller handles 'fixed' from static config). The escalation is
-        evaluated even while idle so the ladder state stays warm, but idle
-        cycles return no override (idle fan handling is per idle_action).
+        should drive this cycle. The speed is proportional to demand, so it eases
+        off as the room nears target. Applied during active heating/cooling and
+        also in ``setback`` idle (where the device keeps blowing) so the fan can
+        settle to its minimum once at/below target. Devices set to 'off'/'fixed',
+        or idling with 'off'/'fan_only', are not included (the controller handles
+        those from their own config).
 
         A *schedule_fan* override (from the active schedule block) takes
         precedence over the per-device fan config, letting a slot cap the speed
@@ -1093,17 +1097,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             return overrides
 
         sched = schedule_fan or {}
-
-        # The active flag gates *escalation*; idle still ticks the state machine.
-        is_active_mode = mode in (MODE_COOLING, MODE_HEATING)
         controllable = climate_active and not window_open and not force_off
 
-        if mode == MODE_COOLING and targets.cool is not None and current_temp is not None:
-            deficit = current_temp - targets.cool
-        elif mode == MODE_HEATING and targets.heat is not None and current_temp is not None:
-            deficit = targets.heat - current_temp
-        else:
-            deficit = 0.0
+        # Temperature error toward the relevant target. Cooling/idle use the cool
+        # target so an idle (at/below target) room yields deficit <= 0 -> min fan.
+        deficit = 0.0
+        if current_temp is not None:
+            if mode == MODE_HEATING and targets.heat is not None:
+                deficit = targets.heat - current_temp
+            elif targets.cool is not None:
+                deficit = current_temp - targets.cool
+            elif targets.heat is not None:
+                deficit = targets.heat - current_temp
 
         for eid in ac_eids:
             fan_control, min_label, max_label = get_fan_control(devices, eid)
@@ -1122,22 +1127,26 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             max_idx = ladder.index(max_label) if max_label in ladder else len(ladder) - 1
             if min_idx > max_idx:
                 min_idx, max_idx = max_idx, min_idx
-            device_active = (
-                controllable
-                and is_active_mode
-                and eid not in cycling_eids
-                and eid not in compressor_forced_off
-            )
+
             chosen = self._fan_speed_manager.evaluate(
                 eid,
                 ladder,
-                active=device_active,
                 deficit=deficit,
                 power_fraction=power_fraction,
                 min_idx=min_idx,
                 max_idx=max_idx,
             )
-            if chosen is not None and device_active:
+
+            # Apply during active conditioning, and in setback idle where the
+            # device keeps blowing (so it can drop to Mute once at/below target).
+            device_active = (
+                mode in (MODE_COOLING, MODE_HEATING)
+                and eid not in cycling_eids
+                and eid not in compressor_forced_off
+            )
+            idle_action, _ = get_idle_action(devices, eid)
+            idle_setback = mode == MODE_IDLE and idle_action == IDLE_ACTION_SETBACK
+            if chosen is not None and controllable and (device_active or idle_setback):
                 overrides[eid] = chosen
         return overrides
 

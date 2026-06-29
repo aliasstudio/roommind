@@ -1657,6 +1657,11 @@ class MPCController:
                     targets=targets,
                     force_off=force_off,
                 )
+                # setback idle keeps the AC in cool/heat mode and blowing; apply
+                # the coordinator's proportional fan override so it can settle to
+                # its minimum (e.g. Mute) once the room is at/below target.
+                if eid in self._fan_overrides:
+                    await self._apply_active_fan_mode(eid)
 
     def _proportional_deadband(self, eid: str, current_temp: float | None, effective_target: float) -> float | None:
         """Deadband threshold for a proportional setpoint send, or None to disable.

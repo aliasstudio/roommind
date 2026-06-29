@@ -1,4 +1,4 @@
-"""Tests for FanSpeedManager auto fan-speed escalation and fan ladder helpers."""
+"""Tests for FanSpeedManager proportional fan-speed control and fan ladder helpers."""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ from unittest.mock import MagicMock
 from custom_components.roommind.const import TargetTemps
 from custom_components.roommind.coordinator import RoomMindCoordinator
 from custom_components.roommind.managers.fan_speed_manager import (
-    DWELL_DEESCALATE_S,
-    DWELL_ESCALATE_S,
+    CHANGE_MIN_S,
     FanSpeedManager,
 )
 from custom_components.roommind.utils.device_utils import get_fan_control, order_fan_modes
@@ -51,68 +50,63 @@ def test_get_fan_control_reads_config_and_sanitizes():
 
 
 # ---------------------------------------------------------------------------
-# FanSpeedManager
+# FanSpeedManager — proportional law
 # ---------------------------------------------------------------------------
 
 
-def test_idle_returns_none_but_keeps_level():
+def test_far_above_target_runs_max():
     m = FanSpeedManager()
-    assert m.evaluate("ac", LADDER, active=False, deficit=2.0, power_fraction=1.0, now=1000) is None
-    assert m.current_level("ac") == 0
+    assert m.evaluate("ac", LADDER, deficit=2.0, power_fraction=1.0, now=1000) == "Strong"
 
 
-def test_escalates_when_warm_and_full_power():
+def test_at_or_below_target_runs_min():
     m = FanSpeedManager()
-    # first active call: dwell huge (changed_at=0) -> steps Mute -> Low
-    assert m.evaluate("ac", LADDER, active=True, deficit=1.0, power_fraction=1.0, now=1000) == "Low"
-    # immediately again: dwell ~0 -> holds
-    assert m.evaluate("ac", LADDER, active=True, deficit=1.0, power_fraction=1.0, now=1001) == "Low"
-    # after escalate dwell -> steps again
-    nxt = 1001 + DWELL_ESCALATE_S
-    assert m.evaluate("ac", LADDER, active=True, deficit=1.0, power_fraction=1.0, now=nxt) == "Mid-low"
+    assert m.evaluate("ac", LADDER, deficit=-0.5, power_fraction=0.0, now=1000) == "Mute"
 
 
-def test_no_escalation_when_demand_low():
+def test_proportional_midpoint():
     m = FanSpeedManager()
-    # full deficit but low power_fraction -> not capacity-limited -> hold at min
-    assert m.evaluate("ac", LADDER, active=True, deficit=1.0, power_fraction=0.5, now=1e6) == "Mute"
+    # 0.5 of the full band, full pf -> middle of a 7-step ladder
+    assert m.evaluate("ac", LADDER, deficit=0.5, power_fraction=1.0, now=1000) == "Medium"
 
 
-def test_deescalates_when_cold_or_low_demand():
+def test_power_fraction_caps_speed():
     m = FanSpeedManager()
-    m._level["ac"] = 3  # Medium
-    # cold room, sustained -> step down
-    out = m.evaluate("ac", LADDER, active=True, deficit=-1.0, power_fraction=0.1, now=1e6)
-    assert out == "Mid-low"
+    # large error but the model only wants 1/3 power -> fan held to ~1/3 ladder
+    assert m.evaluate("ac", LADDER, deficit=2.0, power_fraction=0.33, now=1000) == "Mid-low"
 
 
-def test_deescalation_respects_dwell():
+def test_rate_limited_between_changes():
     m = FanSpeedManager()
-    m._level["ac"] = 3
+    m.evaluate("ac", LADDER, deficit=2.0, power_fraction=1.0, now=1000)  # Strong
+    # demand drops, but a change was just made -> hold until the interval elapses
+    assert m.evaluate("ac", LADDER, deficit=-1.0, power_fraction=0.0, now=1030) == "Strong"
+    assert m.evaluate("ac", LADDER, deficit=-1.0, power_fraction=0.0, now=1000 + CHANGE_MIN_S + 1) == "Mute"
+
+
+def test_bounds_cap_applied_immediately():
+    m = FanSpeedManager()
+    m._level["ac"] = LADDER.index("Strong")
     m._changed_at["ac"] = 1000
-    # only DWELL_ESCALATE elapsed (< DWELL_DEESCALATE) -> hold
-    too_soon = 1000 + DWELL_ESCALATE_S
-    assert m.evaluate("ac", LADDER, active=True, deficit=-1.0, power_fraction=0.1, now=too_soon) == "Medium"
-    ok = 1000 + DWELL_DEESCALATE_S
-    assert m.evaluate("ac", LADDER, active=True, deficit=-1.0, power_fraction=0.1, now=ok) == "Mid-low"
+    # tightened max bound clamps down at once, ignoring the rate limit
+    out = m.evaluate("ac", LADDER, deficit=2.0, power_fraction=1.0, min_idx=0, max_idx=1, now=1005)
+    assert out == "Low"
 
 
-def test_bounds_clamp_level():
+def test_min_bound_respected():
     m = FanSpeedManager()
-    m._level["ac"] = 5
-    # max_idx caps escalation
-    out = m.evaluate("ac", LADDER, active=True, deficit=5.0, power_fraction=1.0, min_idx=1, max_idx=2, now=1e6)
-    assert out == "Mid-low"  # clamped down into [1,2] then held at 2
+    out = m.evaluate("ac", LADDER, deficit=-2.0, power_fraction=0.0, min_idx=1, max_idx=6, now=5e6)
+    assert out == "Low"  # cannot go below min_idx even at/below target
 
 
 def test_empty_ladder_returns_none():
     m = FanSpeedManager()
-    assert m.evaluate("ac", [], active=True, deficit=5.0, power_fraction=1.0, now=1e6) is None
+    assert m.evaluate("ac", [], deficit=5.0, power_fraction=1.0, now=1e6) is None
 
 
 def test_reset_clears_state():
     m = FanSpeedManager()
-    m.evaluate("ac", LADDER, active=True, deficit=1.0, power_fraction=1.0, now=1000)
+    m.evaluate("ac", LADDER, deficit=1.0, power_fraction=1.0, now=1000)
     m.reset("ac")
     assert m.current_level("ac") is None
 
@@ -134,13 +128,20 @@ def _resolve(fake, **kw):
     return RoomMindCoordinator._resolve_fan_overrides(fake, **kw)
 
 
-def test_resolve_auto_escalates_in_cooling():
+def test_resolve_proportional_in_cooling():
     fake = _fake_coordinator(LADDER_LABELS)
     room = {
         "devices": [
-            {"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto", "fan_min_mode": "Mute", "fan_max_mode": "High"}
+            {
+                "entity_id": "climate.ac1",
+                "type": "ac",
+                "fan_control": "auto",
+                "fan_min_mode": "Mute",
+                "fan_max_mode": "High",
+            }
         ]
     }
+    # 2°C above target, full power -> top of the [Mute..High] band
     out = _resolve(
         fake,
         room=room,
@@ -154,7 +155,58 @@ def test_resolve_auto_escalates_in_cooling():
         cycling_eids=set(),
         compressor_forced_off=set(),
     )
-    assert out == {"climate.ac1": "Low"}
+    assert out == {"climate.ac1": "High"}
+
+
+def test_resolve_setback_idle_below_target_goes_min():
+    fake = _fake_coordinator(LADDER_LABELS)
+    fake._fan_speed_manager._level["climate.ac1"] = LADDER.index("Mid-high")  # carried over from cooling
+    room = {
+        "devices": [
+            {
+                "entity_id": "climate.ac1",
+                "type": "ac",
+                "fan_control": "auto",
+                "idle_action": "setback",
+                "fan_min_mode": "Mute",
+                "fan_max_mode": "Strong",
+            }
+        ]
+    }
+    out = _resolve(
+        fake,
+        room=room,
+        mode="idle",
+        current_temp=23.7,
+        targets=TargetTemps(heat=24.0, cool=24.0),
+        power_fraction=0.0,
+        climate_active=True,
+        window_open=False,
+        force_off=False,
+        cycling_eids=set(),
+        compressor_forced_off=set(),
+    )
+    assert out == {"climate.ac1": "Mute"}
+
+
+def test_resolve_idle_off_no_override():
+    fake = _fake_coordinator(LADDER_LABELS)
+    # default idle_action is "off" -> device is off in idle, no fan to drive
+    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}]}
+    out = _resolve(
+        fake,
+        room=room,
+        mode="idle",
+        current_temp=23.7,
+        targets=TargetTemps(heat=24.0, cool=24.0),
+        power_fraction=0.0,
+        climate_active=True,
+        window_open=False,
+        force_off=False,
+        cycling_eids=set(),
+        compressor_forced_off=set(),
+    )
+    assert out == {}
 
 
 def test_resolve_off_returns_empty_and_resets():
@@ -196,12 +248,19 @@ def test_resolve_window_open_no_override():
 
 
 def test_resolve_schedule_fan_caps_max_immediately():
-    """A schedule fan_max_mode cap pulls a high level down at once (no dwell wait)."""
+    """A schedule fan_max_mode cap pulls a high level down at once."""
     fake = _fake_coordinator(LADDER_LABELS)
     fake._fan_speed_manager._level["climate.ac1"] = LADDER.index("Strong")  # currently maxed
+    fake._fan_speed_manager._changed_at["climate.ac1"] = 0.0
     room = {
         "devices": [
-            {"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto", "fan_min_mode": "Mute", "fan_max_mode": "Strong"}
+            {
+                "entity_id": "climate.ac1",
+                "type": "ac",
+                "fan_control": "auto",
+                "fan_min_mode": "Mute",
+                "fan_max_mode": "Strong",
+            }
         ]
     }
     out = _resolve(
@@ -222,7 +281,7 @@ def test_resolve_schedule_fan_caps_max_immediately():
 
 
 def test_resolve_schedule_fan_control_off_disables():
-    """A schedule fan_control='off' suppresses auto override for that slot."""
+    """A schedule fan_control='off' suppresses the override for that slot."""
     fake = _fake_coordinator(LADDER_LABELS)
     room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}]}
     out = _resolve(
@@ -238,25 +297,6 @@ def test_resolve_schedule_fan_control_off_disables():
         cycling_eids=set(),
         compressor_forced_off=set(),
         schedule_fan={"fan_control": "off"},
-    )
-    assert out == {}
-
-
-def test_resolve_idle_no_override():
-    fake = _fake_coordinator(LADDER_LABELS)
-    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}]}
-    out = _resolve(
-        fake,
-        room=room,
-        mode="idle",
-        current_temp=25.0,
-        targets=TargetTemps(heat=20.0, cool=23.0),
-        power_fraction=0.0,
-        climate_active=True,
-        window_open=False,
-        force_off=False,
-        cycling_eids=set(),
-        compressor_forced_off=set(),
     )
     assert out == {}
 
@@ -307,5 +347,4 @@ def test_room_for_control_applies_schedule_idle():
     assert out["devices"][0]["idle_action"] == "fan_only"
     assert out["devices"][0]["idle_fan_mode"] == "Mute"
     assert out["devices"][1]["idle_action"] == "low"  # TRV unaffected
-    # stored room left untouched
     assert room["devices"][0]["idle_action"] == "off"

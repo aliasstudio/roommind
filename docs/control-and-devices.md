@@ -123,9 +123,9 @@ For `Climate Device` / AC entries with selectable fan speeds, `Fan control` deci
 
 - **Off** — leave the fan under the device/firmware's own control (legacy behavior).
 - **Fixed** — always force one speed (e.g. `High` so cool air reaches a distant floor sensor).
-- **Auto** — adapt the speed to demand. RoomMind walks a ladder of the device's speeds (weakest → strongest, the device's own `Auto` is excluded): it steps **up** when the optimizer is asking for near-full power yet the room still hasn't reached target, and steps **down** (toward the quietest speed) when demand is low or the room is already at/below target. `Min`/`Max fan speed` bound the ladder — e.g. minimum `Mute` for a quiet night and maximum `High` to cap noise.
+- **Auto** — speed proportional to demand. RoomMind maps the device's speed ladder (weakest → strongest, the device's own `Auto` is excluded) to how far the room is from target: far above → top of the band, near target → a gentle step, at/below target → the quietest step. The MPC power demand caps it too, so once the thermal model is confident the fan also follows the model (low power → low fan). `Min`/`Max fan speed` bound the ladder — e.g. minimum `Mute` for a quiet night and maximum `High` to cap noise.
 
-Auto escalation reacts faster than it backs off, to avoid the fan hunting. The speed RoomMind chooses while idle is governed separately by the idle `Fan speed` setting.
+Because the speed tracks the remaining error, the fan **eases off smoothly as the room approaches target** instead of staying pinned at maximum. With `setback` idle the AC keeps blowing, so once the room reaches target the fan settles to its minimum (e.g. `Mute`) rather than holding the last cooling speed. A short minimum interval between changes damps jitter on small sensor wobble.
 
 ## Schedule-Driven Idle Behavior
 

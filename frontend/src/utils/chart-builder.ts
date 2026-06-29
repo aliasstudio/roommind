@@ -370,6 +370,9 @@ export function buildChartOptions(
         let predVal: number | null = null;
         for (const p of params) {
           if ((p.seriesId as string)?.endsWith("_events")) continue;
+          // Fan speed is on a separate (level) axis, not °C — it is shown by
+          // name in its own tooltip line below, so skip it in the °C list.
+          if (p.seriesId === "fan_speed") continue;
           const v = p.value?.[1];
           if (v == null) continue;
           markup += `<div>${p.color ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>` : ""}${p.seriesName}: ${v.toFixed(1)}\u00A0${unit}</div>`;
