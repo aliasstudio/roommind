@@ -129,6 +129,58 @@ def _resolve(fake, **kw):
     return RoomMindCoordinator._resolve_fan_overrides(fake, **kw)
 
 
+def _fake_coordinator_states(states):
+    """Fake coordinator whose ``hass.states.get`` maps entity_id -> state."""
+    hass = MagicMock()
+    hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
+    return SimpleNamespace(hass=hass)
+
+
+def _ac_state(state, fan_mode, fan_modes=LADDER_LABELS):
+    s = MagicMock()
+    s.state = state
+    s.attributes = {"fan_mode": fan_mode, "fan_modes": fan_modes}
+    return s
+
+
+def test_cooling_fan_efficiency_running_low_fan():
+    """A running AC on a weak fan yields sub-1.0 effectiveness."""
+    fake = _fake_coordinator_states({"climate.ac1": _ac_state("cool", "Mute")})
+    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac"}]}
+    assert RoomMindCoordinator._cooling_fan_efficiency(fake, room) == 0.5
+
+
+def test_cooling_fan_efficiency_off_ac_is_neutral():
+    """An off/unavailable AC contributes nothing -> neutral 1.0."""
+    fake = _fake_coordinator_states({"climate.ac1": _ac_state("off", "Mute")})
+    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac"}]}
+    assert RoomMindCoordinator._cooling_fan_efficiency(fake, room) == 1.0
+
+
+def test_cooling_fan_efficiency_no_ac_is_neutral():
+    """A room without ACs returns 1.0 (no scaling)."""
+    fake = _fake_coordinator_states({})
+    room = {"devices": [{"entity_id": "climate.trv1", "type": "trv"}]}
+    assert RoomMindCoordinator._cooling_fan_efficiency(fake, room) == 1.0
+
+
+def test_cooling_fan_efficiency_averages_multiple_acs():
+    """Efficiency is the mean across running ACs (Mute=0.5, Strong=1.0 -> 0.75)."""
+    fake = _fake_coordinator_states(
+        {
+            "climate.ac1": _ac_state("cool", "Mute"),
+            "climate.ac2": _ac_state("cool", "Strong"),
+        }
+    )
+    room = {
+        "devices": [
+            {"entity_id": "climate.ac1", "type": "ac"},
+            {"entity_id": "climate.ac2", "type": "ac"},
+        ]
+    }
+    assert RoomMindCoordinator._cooling_fan_efficiency(fake, room) == 0.75
+
+
 def test_resolve_proportional_in_cooling():
     fake = _fake_coordinator(LADDER_LABELS)
     room = {

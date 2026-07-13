@@ -104,6 +104,34 @@ def order_fan_modes(fan_modes: list[str]) -> list[str]:
     return [fm for _, _, fm in graded]
 
 
+# Relative thermal effectiveness of the weakest fan speed versus the strongest.
+# Airflow across the coil scales heat exchange, so the slowest fan removes/adds
+# less heat than the fastest at the same compressor power. 0.5 means the weakest
+# speed is ~half as effective as the strongest; the mid speeds interpolate.
+FAN_EFFICIENCY_MIN = 0.5
+
+
+def fan_efficiency(fan_mode: str, fan_modes: list[str], *, min_efficiency: float = FAN_EFFICIENCY_MIN) -> float:
+    """Relative cooling/heating effectiveness of *fan_mode* on its device's ladder.
+
+    The device's ``fan_modes`` are ordered weakest -> strongest and the result is
+    linear in ladder position: the weakest speed maps to *min_efficiency*, the
+    strongest to 1.0. Used to fold fan speed into the EKF's power_fraction so the
+    learned cooling rate isn't biased by whatever speed happened to run.
+
+    Returns 1.0 (no scaling) when the mode isn't on a graded ladder or the ladder
+    has fewer than two graded speeds — preserving legacy behavior for devices
+    whose fan RoomMind can't reason about (e.g. "Auto"-only).
+    """
+    if not fan_mode:
+        return 1.0
+    ladder = order_fan_modes(fan_modes)
+    if len(ladder) < 2 or fan_mode not in ladder:
+        return 1.0
+    frac = ladder.index(fan_mode) / (len(ladder) - 1)
+    return min_efficiency + (1.0 - min_efficiency) * frac
+
+
 def get_fan_control(devices: list[dict], entity_id: str) -> tuple[str, str, str]:
     """Return (fan_control, fan_min_mode, fan_max_mode) for a device.
 

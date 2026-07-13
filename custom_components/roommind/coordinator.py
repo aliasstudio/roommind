@@ -73,6 +73,7 @@ from .utils.device_utils import (
     IDLE_ACTION_SETBACK,
     apply_idle_override,
     build_rooms_devices_map,
+    fan_efficiency,
     get_ac_eids,
     get_all_entity_ids,
     get_direct_setpoint_eids,
@@ -1153,6 +1154,30 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 overrides[eid] = chosen
         return overrides
 
+    def _cooling_fan_efficiency(self, room: dict) -> float:
+        """Mean fan effectiveness across the room's ACs that are currently running.
+
+        The AC's heat removal at the coil scales with airflow, so the same
+        compressor power_fraction cools less on a low fan than a high one. Folding
+        this into the EKF's cooling power_fraction lets the filter learn beta_c at
+        full-fan effectiveness instead of a fan-blended (downward-biased) value —
+        otherwise nightly quiet-fan operation drags the learned cooling rate down
+        and MPC under-plans during the day. Reads the fan that actually ran over
+        the elapsed interval (the device's current state). Returns 1.0 when no AC
+        fan can be read, leaving the pf unchanged.
+        """
+        effs: list[float] = []
+        for eid in get_ac_eids(room.get("devices", [])):
+            state = self.hass.states.get(eid)
+            if state is None or state.state in ("off", "unavailable", "unknown"):
+                continue
+            fan_mode = state.attributes.get("fan_mode")
+            if fan_mode:
+                effs.append(fan_efficiency(str(fan_mode), list(state.attributes.get("fan_modes") or [])))
+        if not effs:
+            return 1.0
+        return sum(effs) / len(effs)
+
     async def _observe_and_train(
         self,
         *,
@@ -1266,6 +1291,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if ekf_mode in (MODE_HEATING, MODE_COOLING) and ekf_pf == 0.0:
             ekf_mode = MODE_IDLE
             q_residual_training = 0.0
+
+        # Fan-speed effectiveness: scale the cooling training pf by how much air
+        # the AC was actually moving, so the EKF learns beta_c at full-fan
+        # effectiveness rather than a value biased down by quiet-fan operation.
+        # Cooling only — TRV heating has no fan, and AC heating is out of scope
+        # for now (bedroom is cool_only; see thermal-model plan Phase 1.1).
+        if ekf_mode == MODE_COOLING:
+            ekf_pf *= self._cooling_fan_efficiency(room)
 
         # Update thermal model with observation (EKF online learning).
         # The filter must NOT train with a degenerate outdoor fallback (e.g.

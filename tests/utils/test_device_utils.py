@@ -713,3 +713,67 @@ class TestApplyIdleOverride:
         out = apply_idle_override([self.AC], {"idle_action": "setback", "idle_fan_mode": "High"})
         assert out[0]["idle_action"] == "setback"
         assert out[0]["idle_fan_mode"] == "low"  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# fan_efficiency
+# ---------------------------------------------------------------------------
+
+
+class TestFanEfficiency:
+    """Fan-speed effectiveness multiplier (Phase 1.1)."""
+
+    # Bedroom AC ladder as reported by HA (unordered); order_fan_modes sorts it
+    # weakest -> strongest: Mute, Low, Mid-low, Medium, Mid-high, High, Strong.
+    LADDER = ["Strong", "High", "Mid-high", "Medium", "Mid-low", "Low", "Mute", "Auto"]
+
+    def test_weakest_maps_to_min(self):
+        from custom_components.roommind.utils.device_utils import FAN_EFFICIENCY_MIN, fan_efficiency
+
+        assert fan_efficiency("Mute", self.LADDER) == FAN_EFFICIENCY_MIN
+
+    def test_strongest_maps_to_one(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        assert fan_efficiency("Strong", self.LADDER) == 1.0
+
+    def test_monotonic_increasing_along_ladder(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        order = ["Mute", "Low", "Mid-low", "Medium", "Mid-high", "High", "Strong"]
+        vals = [fan_efficiency(m, self.LADDER) for m in order]
+        assert vals == sorted(vals)
+        assert len(set(vals)) == len(vals)  # strictly increasing
+
+    def test_midpoint_interpolates(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        # Medium is index 3 of 7 (0..6) -> 0.5 + 0.5*(3/6) = 0.75
+        assert fan_efficiency("Medium", self.LADDER) == 0.75
+
+    def test_ungraded_mode_returns_one(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        # "Auto" is excluded from the ladder -> neutral (no scaling)
+        assert fan_efficiency("Auto", self.LADDER) == 1.0
+
+    def test_empty_fan_mode_returns_one(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        assert fan_efficiency("", self.LADDER) == 1.0
+
+    def test_single_speed_ladder_returns_one(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        # Fewer than two graded speeds -> can't reason about strength
+        assert fan_efficiency("Low", ["Low", "Auto"]) == 1.0
+
+    def test_mode_not_in_ladder_returns_one(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        assert fan_efficiency("Nonexistent", self.LADDER) == 1.0
+
+    def test_custom_min_efficiency(self):
+        from custom_components.roommind.utils.device_utils import fan_efficiency
+
+        assert fan_efficiency("Mute", self.LADDER, min_efficiency=0.3) == 0.3
