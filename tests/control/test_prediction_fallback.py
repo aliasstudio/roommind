@@ -468,6 +468,61 @@ async def test_bangbang_idle_deadband():
 
 
 @pytest.mark.asyncio
+async def test_bangbang_min_off_suppresses_normal_start():
+    """Within the min-off window, a normal below-threshold start stays idle."""
+    hass = build_hass()
+    ctrl = MPCController(
+        hass,
+        make_room(),
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_IDLE,
+        off_since=time.time(),  # just went idle -> min-off active
+    )
+    # 20.5 is below the heat threshold but within 1°C of target (not an
+    # emergency) -> suppressed by min-off
+    assert ctrl._evaluate_bangbang(20.5, TargetTemps(heat=21.0, cool=24.0)) == MODE_IDLE
+
+
+@pytest.mark.asyncio
+async def test_bangbang_min_off_emergency_bypass_heats():
+    """A runaway-cold room is not trapped in idle by the min-off window."""
+    hass = build_hass()
+    ctrl = MPCController(
+        hass,
+        make_room(),
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_IDLE,
+        off_since=time.time(),  # min-off active
+    )
+    # 16.0 is >1°C past the 21°C target -> emergency bypass overrides min-off
+    assert ctrl._evaluate_bangbang(16.0, TargetTemps(heat=21.0, cool=24.0)) == MODE_HEATING
+
+
+@pytest.mark.asyncio
+async def test_bangbang_min_off_emergency_bypass_cools():
+    """A runaway-hot room is not trapped in idle by the min-off window."""
+    hass = build_hass()
+    ctrl = MPCController(
+        hass,
+        make_room(acs=["climate.ac1"]),
+        model_manager=RoomModelManager(),
+        outdoor_temp=30.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_IDLE,
+        off_since=time.time(),  # min-off active
+    )
+    # 25.0 is >1°C past the 23°C cool target -> emergency bypass overrides min-off
+    assert ctrl._evaluate_bangbang(25.0, TargetTemps(heat=21.0, cool=23.0)) == MODE_COOLING
+
+
+@pytest.mark.asyncio
 async def test_bangbang_none_inputs():
     """None inputs return idle."""
     hass = build_hass()

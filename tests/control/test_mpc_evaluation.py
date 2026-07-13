@@ -750,7 +750,13 @@ def test_hard_ceiling_overrides_heating_past_overshoot(monkeypatch):
 
 
 def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
-    """Hard ceiling does NOT fire when overshoot is below the ceiling threshold."""
+    """Hard ceiling does NOT fire when overshoot is below the ceiling threshold.
+
+    Mirrors ``test_hard_ceiling_overrides_heating_past_overshoot`` (already
+    heating, within min-run, slow system) so only the hard-ceiling logic is
+    under test — otherwise the from-idle start hysteresis would independently
+    suppress heating and mask what this test asserts.
+    """
     hass = build_hass()
     room = make_room()
     mgr = RoomModelManager()
@@ -758,9 +764,12 @@ def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
         hass,
         room,
         model_manager=mgr,
-        outdoor_temp=5.0,
+        outdoor_temp=5.0,  # cold outdoor — model would predict dip and allow heating
         settings={},
         has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        heating_system_type="underfloor",
+        mode_on_since=time.time() - 60,  # within 30-min min-run window
     )
     fake_plan = MPCPlan(
         actions=[MODE_HEATING] * 24,
@@ -771,7 +780,7 @@ def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
         "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
-    # 21.5°C >= 21°C → model-based guard entry, outdoor=5 → prediction dips → allow
+    # 21.5°C < 21°C + 1.0 ceiling → hard ceiling stays silent; min-run keeps heating
     mode, pf = ctrl._evaluate_mpc(21.5, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_HEATING
     assert pf > 0.0

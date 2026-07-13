@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -248,10 +249,16 @@ def test_resolve_window_open_no_override():
 
 
 def test_resolve_schedule_fan_caps_max_immediately():
-    """A schedule fan_max_mode cap pulls a high level down at once."""
+    """A schedule fan_max_mode cap pulls a high level down to the cap at once.
+
+    The cap clamp bypasses the change rate-limit (a tightened bound is applied
+    immediately), so ``_changed_at`` is set to *now* to keep the rate-limit
+    active: this isolates the cap behavior (Strong -> Low) from the separate
+    proportional easing that would otherwise, over time, drift below the cap.
+    """
     fake = _fake_coordinator(LADDER_LABELS)
     fake._fan_speed_manager._level["climate.ac1"] = LADDER.index("Strong")  # currently maxed
-    fake._fan_speed_manager._changed_at["climate.ac1"] = 0.0
+    fake._fan_speed_manager._changed_at["climate.ac1"] = time.time()
     room = {
         "devices": [
             {

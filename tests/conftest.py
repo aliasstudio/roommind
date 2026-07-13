@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,28 @@ def _ha_default_timezone():
         yield
     finally:
         dt_util.set_default_time_zone(original)
+
+
+if sys.platform == "win32":
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_fixture_setup(fixturedef):  # type: ignore[no-untyped-def]
+        """Allow the asyncio event loop to be created on Windows.
+
+        pytest-homeassistant-custom-component disables sockets each test with
+        ``allow_unix_socket=True``. On Linux (incl. CI) asyncio's event-loop
+        self-pipe is a unix socket, so it's permitted and network isolation
+        holds. On Windows there are no unix sockets — the ProactorEventLoop
+        self-pipe goes through ``socket.socketpair()`` (AF_INET) — so setting up
+        the ``event_loop`` fixture errors with SocketBlockedError and every test
+        fails at setup. Re-enable real sockets just for that fixture's creation;
+        this is Windows-dev only and leaves CI behavior unchanged.
+        """
+        if fixturedef.argname == "event_loop":
+            import pytest_socket
+
+            pytest_socket.enable_socket()
+        yield
 
 
 def make_mock_states_get(

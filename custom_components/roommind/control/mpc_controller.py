@@ -1077,15 +1077,24 @@ class MPCController:
                 return MODE_COOLING
             return MODE_IDLE
 
-        # From idle: threshold to start (suppressed during the minimum-off window
-        # so the fallback path also avoids short-cycling).
+        # From idle: threshold to start. Suppressed during the minimum-off window
+        # so the fallback path also avoids short-cycling — but an emergency
+        # excursion (already past target by more than the hard ceiling) must never
+        # be trapped in idle by min-off, mirroring the MPC path's bypass. Without
+        # this a room that just went idle could sit at, e.g., 16°C against a 21°C
+        # target for the whole min-off window.
+        want_heat = can_heat and heat_target is not None and current_temp < heat_target - BANGBANG_HEAT_HYSTERESIS
+        want_cool = can_cool and cool_target is not None and current_temp > cool_target + BANGBANG_COOL_HYSTERESIS
         if self._within_min_off():
-            return MODE_IDLE
+            heat_emergency = want_heat and current_temp <= heat_target - HARD_OVERSHOOT_CEILING
+            cool_emergency = want_cool and current_temp >= cool_target + HARD_OVERSHOOT_CEILING
+            if not (heat_emergency or cool_emergency):
+                return MODE_IDLE
 
-        if can_heat and heat_target is not None and current_temp < heat_target - BANGBANG_HEAT_HYSTERESIS:
+        if want_heat:
             return MODE_HEATING
 
-        if can_cool and cool_target is not None and current_temp > cool_target + BANGBANG_COOL_HYSTERESIS:
+        if want_cool:
             return MODE_COOLING
 
         return MODE_IDLE

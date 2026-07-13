@@ -496,6 +496,7 @@ async def test_migration_legacy_room_gets_devices(store):
         "heating_system_type": "radiator",
         "idle_action": "off",
         "idle_fan_mode": "low",
+        "active_fan_mode": "",
         "setpoint_mode": "proportional",
     }
     assert room["devices"][2] == {
@@ -505,6 +506,7 @@ async def test_migration_legacy_room_gets_devices(store):
         "heating_system_type": "",
         "idle_action": "off",
         "idle_fan_mode": "low",
+        "active_fan_mode": "",
         "setpoint_mode": "proportional",
     }
     # Legacy keys are consistent
