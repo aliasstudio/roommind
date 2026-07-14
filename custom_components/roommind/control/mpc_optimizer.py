@@ -81,6 +81,7 @@ class MPCOptimizer:
         solar_series: list[float] | None = None,
         residual_series: list[float] | None = None,
         occupancy_series: list[float] | None = None,
+        fan_efficiency_series: list[float] | None = None,
     ) -> MPCPlan:
         """Find optimal action sequence over the planning horizon.
 
@@ -90,6 +91,13 @@ class MPCOptimizer:
         Accepts dual target series (heat_target_series + cool_target_series)
         for dead-band-aware optimization. If cool_target_series is None,
         it defaults to heat_target_series (single-target behavior).
+
+        *fan_efficiency_series* scales the AC's cooling capacity per block
+        (1.0 = full fan). ``model.Q_cool`` is learned at full-fan effectiveness,
+        so a scheduled ``fan_max_mode`` cap that keeps the fan quiet overnight
+        shows up here as reduced capacity. Because the lookahead sees it, the
+        optimizer pre-cools while capacity is still high instead of planning
+        cooling it won't be able to deliver.
         """
         if cool_target_series is None:
             cool_target_series = list(heat_target_series)
@@ -120,6 +128,7 @@ class MPCOptimizer:
         q_solar = solar_series or [0.0] * n_blocks
         q_residual = residual_series or [0.0] * n_blocks
         q_occupancy = occupancy_series or [0.0] * n_blocks
+        fan_eff = fan_efficiency_series or [1.0] * n_blocks
 
         actions: list[str] = []
         temperatures: list[float] = [T_room]
@@ -135,6 +144,7 @@ class MPCOptimizer:
             qs = q_solar[i] if i < len(q_solar) else 0.0
             qr = q_residual[i] if i < len(q_residual) else 0.0
             qo = q_occupancy[i] if i < len(q_occupancy) else 0.0
+            fe = fan_eff[i] if i < len(fan_eff) else 1.0
 
             # Determine available actions this block
             available = [MODE_IDLE]
@@ -156,6 +166,7 @@ class MPCOptimizer:
                 future_solar = q_solar[i:] if q_solar else None
                 future_residual = q_residual[i:] if q_residual else None
                 future_occupancy = q_occupancy[i:] if q_occupancy else None
+                future_fan_eff = fan_eff[i:] if fan_eff else None
                 for action in available:
                     cost = self._evaluate_action(
                         action,
@@ -170,6 +181,7 @@ class MPCOptimizer:
                         future_solar=future_solar,
                         future_residual=future_residual,
                         future_occupancy=future_occupancy,
+                        future_fan_eff=future_fan_eff,
                     )
                     if cost < best_cost:
                         best_cost = cost
@@ -186,6 +198,7 @@ class MPCOptimizer:
                 q_solar=qs,
                 q_residual=qr,
                 q_occupancy=qo,
+                fan_efficiency=fe,
             )
             if best_action == MODE_IDLE:
                 pf = 0.0
@@ -196,7 +209,7 @@ class MPCOptimizer:
             if best_action == MODE_HEATING:
                 Q = pf * self.model.Q_heat
             elif best_action == MODE_COOLING:
-                Q = -(pf * self.model.Q_cool)
+                Q = -(pf * self.model.Q_cool * fe)
             else:
                 Q = 0.0
             next_temp = self.model.predict(
@@ -246,6 +259,7 @@ class MPCOptimizer:
         future_solar: list[float] | None = None,
         future_residual: list[float] | None = None,
         future_occupancy: list[float] | None = None,
+        future_fan_eff: list[float] | None = None,
     ) -> float:
         """Evaluate the cost of taking an action, looking a few steps ahead.
 
@@ -255,6 +269,10 @@ class MPCOptimizer:
         sustained-comfort benefit of pre-heating. Radiator / "" lookahead stays
         at LOOKAHEAD_BASE_BLOCKS and synthesis is gated off — byte-identical
         to pre-fix behaviour.
+
+        *future_fan_eff* scales the COOLING hypothesis per block, so a capacity
+        drop later in the window (scheduled quiet fan) raises the cost of
+        waiting and makes cooling now the cheaper choice.
         """
         lookahead = min(self._lookahead_blocks, len(future_T_outdoor))
         Q = self._action_to_Q(action)
@@ -263,6 +281,7 @@ class MPCOptimizer:
         solar = future_solar or []
         residual = future_residual or []
         occupancy = future_occupancy or []
+        fan_eff = future_fan_eff or []
         synthesis_enabled = (
             action == MODE_HEATING
             and self._lookahead_blocks > LOOKAHEAD_BASE_BLOCKS
@@ -277,6 +296,9 @@ class MPCOptimizer:
             # Simulate HVAC for min_run_blocks (not just 1 block) to correctly
             # value sustained heating/cooling over the lookahead horizon.
             block_Q = Q if j < self.min_run_blocks else 0.0
+            # Cooling delivers only what the block's fan cap allows.
+            if block_Q < 0:
+                block_Q *= fan_eff[j] if j < len(fan_eff) else 1.0
             # Residual for the idle / post-run blocks. For the HEATING
             # hypothesis on a gated slow system, synthesize the afterglow this
             # hypothetical run would generate; otherwise fall back to the
@@ -343,10 +365,15 @@ class MPCOptimizer:
         q_solar: float = 0.0,
         q_residual: float = 0.0,
         q_occupancy: float = 0.0,
+        fan_efficiency: float = 1.0,
     ) -> tuple[float, str]:
         """Analytical closed-form optimal heating/cooling power.
 
         Returns (power_fraction in [0,1], mode).
+
+        *fan_efficiency* is the fraction of full-fan cooling capacity available
+        this block: a capped fan needs a larger power fraction for the same heat
+        removal, and saturates at 1.0 once the capacity simply isn't there.
         """
         if not math.isfinite(T_room) or not math.isfinite(target):
             return 0.0, MODE_IDLE
@@ -400,7 +427,8 @@ class MPCOptimizer:
             frac = min(Q_required / max(self.model.Q_heat, 0.01), 1.0)
             return max(frac, MIN_POWER_FRACTION), MODE_HEATING
         elif Q_required < 0 and self.can_cool and not self._is_outdoor_gated(MODE_COOLING, T_outdoor):
-            frac = min(abs(Q_required) / max(self.model.Q_cool, 0.01), 1.0)
+            available_cool = self.model.Q_cool * max(fan_efficiency, 0.0)
+            frac = min(abs(Q_required) / max(available_cool, 0.01), 1.0)
             return max(frac, MIN_POWER_FRACTION), MODE_COOLING
         else:
             return 0.0, MODE_IDLE

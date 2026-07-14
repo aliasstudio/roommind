@@ -694,6 +694,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             off_since=self._off_since.get(area_id),
             has_external_sensor=has_external_sensor,
             target_resolver=target_resolver,
+            fan_cap_resolver=self._make_fan_cap_resolver(room_for_control, schedule_blocks),
             q_solar=self._current_q_solar,
             latitude=self.hass.config.latitude,
             longitude=self.hass.config.longitude,
@@ -1153,6 +1154,48 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if chosen is not None and controllable and (device_active or idle_setback):
                 overrides[eid] = chosen
         return overrides
+
+    def _make_fan_cap_resolver(self, room: dict, schedule_blocks: dict | None):
+        """Build a ``(timestamp) -> cooling capacity multiplier`` for the MPC horizon.
+
+        Resolves each AC's effective ``fan_max_mode`` at a future time (schedule
+        block override, else the device config) and converts it to a fraction of
+        full-fan cooling capacity. The EKF learns beta_c at full fan, so this cap
+        is what limits the AC later in the plan — letting MPC pre-cool before a
+        quiet-fan window rather than discovering it can't keep up.
+
+        Returns None when no AC's fan is RoomMind-managed, leaving the optimizer
+        at full capacity (its previous behavior).
+        """
+        from .utils.schedule_utils import resolve_schedule_fan
+
+        devices = room.get("devices", [])
+        # Snapshot each AC's ladder once — fan_modes don't change within a cycle.
+        entries: list[tuple[list[str], str, str]] = []
+        for eid in get_ac_eids(devices):
+            state = self.hass.states.get(eid)
+            fan_modes = list((state.attributes.get("fan_modes") or []) if state else [])
+            if len(order_fan_modes(fan_modes)) < 2:
+                continue
+            fan_control, _min_label, max_label = get_fan_control(devices, eid)
+            entries.append((fan_modes, fan_control, max_label))
+        if not entries:
+            return None
+
+        def _resolve(ts: float) -> float:
+            sched = resolve_schedule_fan(schedule_blocks, ts) or {}
+            effs: list[float] = []
+            for fan_modes, fan_control, max_label in entries:
+                control = sched.get("fan_control", fan_control)
+                if control != FAN_CONTROL_AUTO:
+                    # RoomMind isn't driving this fan — assume it can run flat out.
+                    effs.append(1.0)
+                    continue
+                label = sched.get("fan_max_mode", max_label)
+                effs.append(fan_efficiency(label, fan_modes) if label else 1.0)
+            return sum(effs) / len(effs) if effs else 1.0
+
+        return _resolve
 
     def _cooling_fan_efficiency(self, room: dict) -> float:
         """Mean fan effectiveness across the room's ACs that are currently running.

@@ -732,6 +732,7 @@ class MPCController:
         previous_mode: str = MODE_IDLE,
         has_external_sensor: bool = True,
         target_resolver: Callable[[float], TargetTemps | float] | None = None,
+        fan_cap_resolver: Callable[[float], float] | None = None,
         q_solar: float = 0.0,
         latitude: float = 0.0,
         longitude: float = 0.0,
@@ -757,6 +758,7 @@ class MPCController:
         self._model_manager = model_manager
         self._area_id = room_config.get("area_id", "unknown")
         self._target_resolver = target_resolver
+        self._fan_cap_resolver = fan_cap_resolver
         self.last_plan: MPCPlan | None = None
         self.q_solar = q_solar
         self._latitude = latitude
@@ -918,6 +920,15 @@ class MPCController:
         # Build occupancy heat series (constant over horizon)
         occupancy_series = [self.q_occupancy] * horizon_blocks
 
+        # Build the cooling-capacity series from upcoming scheduled fan caps, so
+        # the optimizer can pre-cool ahead of a quiet-fan window instead of
+        # planning cooling the fan won't be allowed to deliver.
+        fan_efficiency_series: list[float] | None = None
+        if self._fan_cap_resolver is not None:
+            _now = time.time()
+            _dt_s = PLAN_DT_MINUTES * 60
+            fan_efficiency_series = [self._fan_cap_resolver(_now + i * _dt_s) for i in range(horizon_blocks)]
+
         # Build dual target series with schedule lookahead for pre-heating/pre-cooling.
         # None values (from "off" action) are replaced with current_temp so the
         # optimizer sees "no deviation needed = idle optimal".
@@ -968,6 +979,7 @@ class MPCController:
             solar_series=solar_series,
             residual_series=residual_series,
             occupancy_series=occupancy_series,
+            fan_efficiency_series=fan_efficiency_series,
         )
         self.last_plan = plan
 

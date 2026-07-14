@@ -792,3 +792,84 @@ def test_approach_rate_widens_cooling_band_symmetrically():
     assert m1 == MODE_COOLING and m2 == MODE_COOLING
     assert pf_gentle < pf_full
     assert pf_gentle >= MIN_POWER_FRACTION
+
+
+# ---------------------------------------------------------------------------
+# fan_efficiency_series — scheduled fan caps limit cooling capacity
+# ---------------------------------------------------------------------------
+
+
+def _cool_opt():
+    """Optimizer for a cooling-only room with headroom."""
+    model = RCModel(C=1.0, U=0.5, Q_heat=3.0, Q_cool=6.0)
+    return MPCOptimizer(
+        model=model,
+        can_heat=False,
+        can_cool=True,
+        w_comfort=40.0,
+        w_energy=1.0,
+        min_run_blocks=2,
+        outdoor_cooling_min=16.0,
+    )
+
+
+def test_fan_cap_raises_power_fraction():
+    """A capped fan needs a larger power fraction for the same heat removal.
+
+    Values kept mild so the full-fan case doesn't already saturate at pf=1.0.
+    """
+    opt = _cool_opt()
+    pf_full, mode = opt.compute_optimal_power(23.2, 25.0, 23.0, 5.0, fan_efficiency=1.0)
+    pf_capped, _ = opt.compute_optimal_power(23.2, 25.0, 23.0, 5.0, fan_efficiency=0.8)
+    assert mode == MODE_COOLING
+    assert pf_full < 1.0  # guard: the comparison below is meaningless if saturated
+    assert pf_capped > pf_full
+
+
+def test_fan_cap_predicts_weaker_cooling():
+    """With a capped fan the planned trajectory stays warmer — the optimizer no
+    longer assumes full-fan cooling it cannot deliver."""
+    opt = _cool_opt()
+    args = {
+        "T_room": 24.0,
+        "T_outdoor_series": [30.0] * 12,
+        "heat_target_series": [18.0] * 12,
+        "cool_target_series": [23.0] * 12,
+        "dt_minutes": 5.0,
+    }
+    full = opt.optimize(fan_efficiency_series=[1.0] * 12, **args)
+    capped = opt.optimize(fan_efficiency_series=[0.4] * 12, **args)
+    assert capped.temperatures[-1] > full.temperatures[-1]
+
+
+def test_fan_efficiency_series_defaults_to_full_capacity():
+    """Omitting the series leaves behavior identical to a full-fan series."""
+    opt = _cool_opt()
+    args = {
+        "T_room": 24.0,
+        "T_outdoor_series": [30.0] * 12,
+        "heat_target_series": [18.0] * 12,
+        "cool_target_series": [23.0] * 12,
+        "dt_minutes": 5.0,
+    }
+    default = opt.optimize(**args)
+    explicit = opt.optimize(fan_efficiency_series=[1.0] * 12, **args)
+    assert default.actions == explicit.actions
+    assert default.power_fractions == explicit.power_fractions
+    assert default.temperatures == explicit.temperatures
+
+
+def test_fan_cap_does_not_affect_heating():
+    """The cap is a cooling-side limit; heating plans are untouched."""
+    model = RCModel(C=1.0, U=0.5, Q_heat=3.0, Q_cool=6.0)
+    opt = MPCOptimizer(model=model, can_heat=True, can_cool=False, min_run_blocks=2)
+    args = {
+        "T_room": 18.0,
+        "T_outdoor_series": [5.0] * 12,
+        "heat_target_series": [21.0] * 12,
+        "dt_minutes": 5.0,
+    }
+    full = opt.optimize(fan_efficiency_series=[1.0] * 12, **args)
+    capped = opt.optimize(fan_efficiency_series=[0.4] * 12, **args)
+    assert capped.actions == full.actions
+    assert capped.temperatures == full.temperatures
