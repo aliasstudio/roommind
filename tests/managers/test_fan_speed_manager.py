@@ -132,7 +132,7 @@ def _resolve(fake, **kw):
 def _fake_coordinator_states(states):
     """Fake coordinator whose ``hass.states.get`` maps entity_id -> state."""
     hass = MagicMock()
-    hass.states.get = MagicMock(side_effect=lambda eid: states.get(eid))
+    hass.states.get = MagicMock(side_effect=states.get)
     return SimpleNamespace(hass=hass)
 
 

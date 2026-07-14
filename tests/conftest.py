@@ -31,7 +31,6 @@ def _ha_default_timezone():
     finally:
         dt_util.set_default_time_zone(original)
 
-
 if sys.platform == "win32":
 
     @pytest.hookimpl(hookwrapper=True)
