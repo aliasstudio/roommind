@@ -161,6 +161,15 @@ export class RsAnalyticsModel extends LitElement {
                   "analytics.info.solar_gain",
                 )
               : nothing}
+            ${stat(
+              "internal_gain",
+              hasIdleData && model
+                ? toDisplayDelta(model.Q_internal, this.hass).toFixed(2) + tempUnit(this.hass) + "/h"
+                : ph,
+              "analytics.internal_gain",
+              "",
+              "analytics.info.internal_gain",
+            )}
             ${model && m?.has_occupancy_sensors
               ? stat(
                   "occupancy_gain",

@@ -263,6 +263,7 @@ export interface AnalyticsData {
       Q_cool: number;
       Q_solar: number;
       Q_occupancy: number;
+      Q_internal: number;
     };
     n_samples: number;
     n_observations: number;
