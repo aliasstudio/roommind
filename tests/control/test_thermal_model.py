@@ -1687,6 +1687,64 @@ def test_ekf_learns_internal_gain_and_decouples_alpha():
     assert model.U == pytest.approx(0.2, abs=0.05)
 
 
+def test_clamped_parameter_is_decoupled_from_the_rest():
+    """A parameter pinned at a bound loses its cross-covariance.
+
+    Otherwise the filter keeps pushing into the wall and drags correlated
+    parameters with it (this is what drove g to zero once alpha pinned).
+    """
+    ekf = ThermalEKF()
+    # Correlate alpha with everything, then shove it past its floor.
+    for j in range(ekf._N):
+        if j != 1:
+            ekf._P[1][j] = 0.3
+            ekf._P[j][1] = 0.3
+    ekf._x[1] = ThermalEKF._ALPHA_MIN - 1.0
+    ekf._clamp_parameters()
+
+    assert ekf._x[1] == ThermalEKF._ALPHA_MIN  # pinned at the bound
+    for j in range(ekf._N):
+        if j != 1:
+            assert ekf._P[1][j] == 0.0, f"P[1][{j}] should be decoupled"
+            assert ekf._P[j][1] == 0.0, f"P[{j}][1] should be decoupled"
+    assert ekf._P[1][1] != 0.0  # own variance is kept
+
+
+def test_unclamped_parameters_keep_their_covariance():
+    """Parameters inside their bounds are left alone — no behavior change for a
+    healthy, converged filter."""
+    ekf = ThermalEKF()
+    for j in range(ekf._N):
+        if j != 1:
+            ekf._P[1][j] = 0.3
+            ekf._P[j][1] = 0.3
+    ekf._x[1] = (ThermalEKF._ALPHA_MIN + ThermalEKF._ALPHA_MAX) / 2  # comfortably inside
+    ekf._clamp_parameters()
+
+    for j in range(ekf._N):
+        if j != 1:
+            assert ekf._P[1][j] == 0.3
+            assert ekf._P[j][1] == 0.3
+
+
+def test_pinned_alpha_does_not_drag_internal_gain_down():
+    """Regression: a room warming while warmer than outdoors must raise g.
+
+    With alpha pinned at its floor, the alpha<->g correlation used to flip the
+    sign of g's Kalman gain, so every "warmer than predicted" reading pushed the
+    internal gain toward zero instead of up.
+    """
+    ekf = ThermalEKF(T_init=22.8)
+    ekf.set_applicable_modes(can_heat=False, can_cool=True)
+    ekf._x[1] = ThermalEKF._ALPHA_MIN  # start pinned, as a young filter does
+    T = 22.8
+    for _ in range(80):  # ~4 h of idle warming, room always warmer than outdoors
+        T += 0.017  # ~+0.33 °C/h
+        ekf.update(T_measured=round(T, 1), T_outdoor=16.0, mode="idle", dt_minutes=3.0)
+
+    assert ekf._x[6] > 0.1, f"internal gain collapsed to {ekf._x[6]:.3f} despite steady warming"
+
+
 def test_ekf_internal_gain_stays_within_bounds():
     """g is clamped to [_G_MIN, _G_MAX] under extreme data."""
     ekf = ThermalEKF()

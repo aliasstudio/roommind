@@ -843,14 +843,43 @@ class ThermalEKF:
 
         self._P = P_new
 
+    # (state index, lower bound attr, upper bound attr) for every learned parameter
+    _PARAM_BOUNDS: tuple[tuple[int, str, str], ...] = (
+        (1, "_ALPHA_MIN", "_ALPHA_MAX"),
+        (2, "_BETA_H_MIN", "_BETA_H_MAX"),
+        (3, "_BETA_C_MIN", "_BETA_C_MAX"),
+        (4, "_BETA_S_MIN", "_BETA_S_MAX"),
+        (5, "_BETA_O_MIN", "_BETA_O_MAX"),
+        (6, "_G_MIN", "_G_MAX"),
+    )
+
     def _clamp_parameters(self) -> None:
-        """Enforce physical bounds on parameters."""
-        self._x[1] = max(self._ALPHA_MIN, min(self._ALPHA_MAX, self._x[1]))
-        self._x[2] = max(self._BETA_H_MIN, min(self._BETA_H_MAX, self._x[2]))
-        self._x[3] = max(self._BETA_C_MIN, min(self._BETA_C_MAX, self._x[3]))
-        self._x[4] = max(self._BETA_S_MIN, min(self._BETA_S_MAX, self._x[4]))
-        self._x[5] = max(self._BETA_O_MIN, min(self._BETA_O_MAX, self._x[5]))
-        self._x[6] = max(self._G_MIN, min(self._G_MAX, self._x[6]))
+        """Enforce physical bounds, and decouple any parameter pinned at a bound.
+
+        Clamping only fixes the state: P still says the parameter can keep moving
+        the way the filter wanted, so the filter pushes into the wall every step
+        and — through the cross-covariance — drags its correlated neighbours with
+        it.  Only ``g - alpha*(T - T_out)`` is observable, so alpha and g are
+        correlated; once alpha pins at its floor the sign of g's Kalman gain
+        flips and a room that is warming (positive innovation) *lowers* its
+        learned internal gain, driving g to zero.  Zeroing the cross terms of a
+        pinned parameter stops it from poisoning the rest.  Mature filters are
+        unaffected (they sit inside the bounds); young ones escape the corner
+        days sooner.
+        """
+        pinned: list[int] = []
+        for idx, lo_attr, hi_attr in self._PARAM_BOUNDS:
+            value = self._x[idx]
+            clamped = max(getattr(self, lo_attr), min(getattr(self, hi_attr), value))
+            if clamped != value:
+                pinned.append(idx)
+            self._x[idx] = clamped
+
+        for idx in pinned:
+            for j in range(self._N):
+                if j != idx:
+                    self._P[idx][j] = 0.0
+                    self._P[j][idx] = 0.0
 
     def _enforce_psd(self) -> None:
         """Enforce symmetry and positive semi-definiteness of P."""
