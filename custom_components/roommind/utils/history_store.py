@@ -17,6 +17,7 @@ DETAIL_FIELDS = [
     "mode",
     "predicted_temp",
     "window_open",
+    "dehumidifying",
     "heating_power",
     "solar_irradiance",
     "blind_position",
@@ -83,6 +84,7 @@ class HistoryStore:
                     "mode": data.get("mode", ""),
                     "predicted_temp": data.get("predicted_temp", ""),
                     "window_open": data.get("window_open", ""),
+                    "dehumidifying": data.get("dehumidifying", ""),
                     "heating_power": data.get("heating_power", ""),
                     "solar_irradiance": data.get("solar_irradiance", ""),
                     "blind_position": data.get("blind_position", ""),
@@ -202,6 +204,7 @@ class HistoryStore:
                 "timestamp": bucket_key * bucket_seconds,
                 "mode": bucket[0]["mode"],
                 "window_open": bucket[0].get("window_open", ""),
+                "dehumidifying": bucket[0].get("dehumidifying", ""),
                 "device_setpoint": bucket[0].get("device_setpoint", ""),
                 "fan_mode": bucket[0].get("fan_mode", ""),
             }

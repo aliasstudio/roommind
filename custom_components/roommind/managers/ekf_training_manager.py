@@ -74,13 +74,19 @@ class EkfTrainingManager:
         can_cool: bool,
         dt_minutes: float,
         q_occupancy: float = 0.0,
+        dehumidifying: bool = False,
     ) -> None:
         """Process an EKF training step for a room.
 
         Contains the full training decision tree: window open, raw open
-        (within delay), unobservable mode, or normal accumulation.
+        (within delay), dehumidifying, unobservable mode, or normal
+        accumulation.
         """
-        if window_open or raw_open:
+        # Dehumidifying joins the window-open branch: in both cases an
+        # unmodelled heat flow is at work (open window / AC compressor running
+        # in dry mode), so we track temperature but learn nothing.  k_window
+        # stays gated on window_open, so a dry period never teaches it.
+        if window_open or raw_open or dehumidifying:
             self.flush(
                 area_id,
                 current_temp,

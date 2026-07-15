@@ -160,6 +160,88 @@ def test_window_open_in_csv(history_dir):
     assert rows[1]["window_open"] == "False"
 
 
+def test_dehumidifying_in_csv(history_dir):
+    """dehumidifying field is written and read correctly."""
+    store = HistoryStore(history_dir)
+    for drying in (True, False):
+        store.record(
+            "room_a",
+            {
+                "room_temp": 24.0,
+                "outdoor_temp": 25.0,
+                "target_temp": 24.0,
+                "mode": "idle",
+                "predicted_temp": 24.0,
+                "dehumidifying": drying,
+            },
+        )
+    rows = store.read_detail("room_a")
+    assert rows[0]["dehumidifying"] == "True"
+    assert rows[1]["dehumidifying"] == "False"
+
+
+def test_existing_csv_without_dehumidifying_column_migrates(history_dir):
+    """A CSV written before the column existed keeps its rows and gains the field.
+
+    Guards the upgrade path for installs with months of recorded history.
+    """
+    store = HistoryStore(history_dir)
+    os.makedirs(history_dir, exist_ok=True)
+    path = store._detail_path("room_a")
+    with open(path, "w", newline="") as f:
+        f.write("timestamp,room_temp,outdoor_temp,target_temp,mode,predicted_temp,window_open\n")
+        f.write("1000,21.0,5.0,21.0,heating,20.9,False\n")
+
+    store.record(
+        "room_a",
+        {
+            "room_temp": 22.0,
+            "outdoor_temp": 5.0,
+            "target_temp": 21.0,
+            "mode": "idle",
+            "predicted_temp": 22.0,
+            "dehumidifying": True,
+        },
+    )
+
+    rows = store.read_detail("room_a")
+    assert len(rows) == 2
+    # Pre-existing row survives, with an empty value for the new column
+    assert rows[0]["room_temp"] == "21.0"
+    assert rows[0]["mode"] == "heating"
+    assert rows[0]["dehumidifying"] == ""
+    assert rows[1]["dehumidifying"] == "True"
+
+
+def test_downsample_preserves_dehumidifying(history_dir):
+    """_downsample takes the first dehumidifying value from each bucket."""
+    store = HistoryStore(history_dir)
+    rows = [
+        {
+            "timestamp": "1000",
+            "room_temp": "24.0",
+            "outdoor_temp": "25.0",
+            "target_temp": "24.0",
+            "mode": "idle",
+            "predicted_temp": "24.0",
+            "dehumidifying": "True",
+        },
+        {
+            "timestamp": "1500",
+            "room_temp": "24.0",
+            "outdoor_temp": "25.0",
+            "target_temp": "24.0",
+            "mode": "idle",
+            "predicted_temp": "24.0",
+            "dehumidifying": "False",
+        },
+    ]
+    result = store._downsample(rows, bucket_seconds=300)
+    assert len(result) == 2
+    assert result[0]["dehumidifying"] == "True"
+    assert result[1]["dehumidifying"] == "False"
+
+
 def test_downsample_preserves_window_open(history_dir):
     """_downsample takes first window_open value from each bucket."""
     store = HistoryStore(history_dir)

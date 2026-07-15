@@ -63,6 +63,7 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
                 "mode": row.get("mode", ""),
                 "predicted_temp": _safe_float(row.get("predicted_temp", "")),
                 "window_open": row.get("window_open", "") in ("True", "true", "1"),
+                "dehumidifying": row.get("dehumidifying", "") in ("True", "true", "1"),
                 "heating_power": _safe_float(row.get("heating_power", "")),
                 "solar_irradiance": _safe_float(row.get("solar_irradiance", "")),
                 "blind_position": _safe_int(row.get("blind_position", "")),

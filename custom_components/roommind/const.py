@@ -121,6 +121,14 @@ MOLD_PREVENTION_DELTAS = {"light": 1.0, "medium": 2.0, "strong": 3.0}
 MOLD_HYSTERESIS = 5.0  # surface RH must drop this much below warning to clear
 MIN_MOLD_GROWTH_TEMP = 5.0  # °C — below this surface temp, mold risk negligible
 
+# Active dehumidification — drives an AC's "dry" hvac_mode off room air RH.
+# Independent of mold prevention above: that one *raises* the heat target to
+# warm cold surfaces, this one runs the compressor to pull water out of the air.
+DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD = 60.0  # room air RH % — activation threshold
+DEHUMIDIFY_HYSTERESIS = 3.0  # RH must drop this much below threshold to deactivate
+DEHUMIDIFY_MIN_MINUTES = 10.0  # minimum time in dry mode — protects the compressor
+DEHUMIDIFY_HVAC_MODE = "dry"
+
 # Heating system profiles — residual heat modeling per system type
 # tau_minutes: exponential decay time constant of residual heat after heating stops
 # initial_fraction: fraction of beta_h at t=0 (fully charged thermal mass)

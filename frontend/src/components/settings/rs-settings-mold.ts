@@ -18,6 +18,8 @@ export class RsSettingsMold extends RsSettingsBase {
   @property({ type: Boolean }) public moldPreventionEnabled = false;
   @property({ type: String }) public moldPreventionIntensity: "light" | "medium" | "strong" =
     "medium";
+  @property({ type: Boolean }) public dehumidifyEnabled = false;
+  @property({ type: Number }) public dehumidifyThreshold = 60;
 
   render() {
     const l = this.hass.language;
@@ -159,6 +161,49 @@ export class RsSettingsMold extends RsSettingsBase {
                   >
                 </ha-select>
                 <span class="field-hint">${localize("mold.intensity_hint", l)}</span>
+              </div>
+            `
+          : nothing}
+      </div>
+
+      <!-- Dehumidification section -->
+      <div class="settings-section">
+        <div class="toggle-row">
+          <div class="toggle-text">
+            <span class="toggle-label">
+              <ha-icon
+                icon="mdi:water-percent"
+                style="--mdc-icon-size: 18px; vertical-align: middle; margin-right: 4px"
+              ></ha-icon>
+              ${localize("mold.dehumidify", l)}
+            </span>
+            <span class="toggle-hint">${localize("mold.dehumidify_desc", l)}</span>
+          </div>
+          <ha-switch
+            .checked=${this.dehumidifyEnabled}
+            @change=${(e: Event) =>
+              this._fire("dehumidifyEnabled", (e.target as HTMLInputElement).checked)}
+          ></ha-switch>
+        </div>
+        ${this.dehumidifyEnabled
+          ? html`
+              <div class="threshold-grid" style="margin-top: 12px">
+                <div class="threshold-field">
+                  <ha-textfield
+                    .value=${String(this.dehumidifyThreshold)}
+                    .label=${localize("mold.dehumidify_threshold", l)}
+                    .suffix=${"%"}
+                    type="number"
+                    step="1"
+                    min="30"
+                    max="95"
+                    @change=${(e: Event) => {
+                      const v = parseFloat((e.target as HTMLInputElement).value);
+                      if (!isNaN(v) && v >= 30 && v <= 95) this._fire("dehumidifyThreshold", v);
+                    }}
+                  ></ha-textfield>
+                  <span class="field-hint">${localize("mold.dehumidify_threshold_hint", l)}</span>
+                </div>
               </div>
             `
           : nothing}

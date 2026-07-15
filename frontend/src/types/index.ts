@@ -47,6 +47,7 @@ export interface RoomLiveData {
   mold_surface_rh: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
+  dehumidifying: boolean;
   blind_position: number | null;
   cover_auto_paused: boolean;
   cover_override_until?: number | null;
@@ -178,6 +179,8 @@ export interface GlobalSettings {
   mold_prevention_intensity?: "light" | "medium" | "strong";
   mold_prevention_notify_enabled?: boolean;
   mold_prevention_notify_targets?: NotificationTarget[];
+  dehumidify_enabled?: boolean;
+  dehumidify_humidity_threshold?: number;
   compressor_groups?: CompressorGroup[];
   room_order?: string[];
   group_by_floor?: boolean;
@@ -242,6 +245,7 @@ export interface AnalyticsDataPoint {
   mode: string;
   predicted_temp: number | null;
   window_open: boolean;
+  dehumidifying?: boolean;
   heating_power: number | null;
   solar_irradiance: number | null;
   blind_position?: number | null;

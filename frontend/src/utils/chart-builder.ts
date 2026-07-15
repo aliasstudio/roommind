@@ -167,9 +167,11 @@ export function buildChartSeries(
   const heatingBandData: Array<[number, number | null]> = [];
   const coolingBandData: Array<[number, number | null]> = [];
   const windowBandData: Array<[number, number | null]> = [];
+  const dehumidifyBandData: Array<[number, number | null]> = [];
   let hasHeating = false,
     hasCooling = false,
-    hasWindow = false;
+    hasWindow = false,
+    hasDehumidify = false;
 
   for (const p of points) {
     const ts = p.ts * 1000;
@@ -190,6 +192,12 @@ export function buildChartSeries(
       hasWindow = true;
     } else {
       windowBandData.push([ts, null]);
+    }
+    if (p.dehumidifying) {
+      dehumidifyBandData.push([ts, 999]);
+      hasDehumidify = true;
+    } else {
+      dehumidifyBandData.push([ts, null]);
     }
   }
 
@@ -220,6 +228,23 @@ export function buildChartSeries(
       showSymbol: false,
       lineStyle: { width: 0 },
       areaStyle: { color: "rgba(63, 81, 181, 0.08)", origin: "start" },
+      tooltip: { show: false },
+      yAxisIndex: 0,
+      z: -1,
+      connectNulls: false,
+    });
+  }
+
+  if (hasDehumidify) {
+    series.push({
+      id: "dehumidify_events",
+      type: "line",
+      name: localize("analytics.dehumidify_period", l),
+      color: "rgb(156, 39, 176)",
+      data: dehumidifyBandData,
+      showSymbol: false,
+      lineStyle: { width: 0 },
+      areaStyle: { color: "rgba(156, 39, 176, 0.1)", origin: "start" },
       tooltip: { show: false },
       yAxisIndex: 0,
       z: -1,
@@ -413,6 +438,7 @@ export function buildChartOptions(
                 parts.push(`AC ${formatTemp(closest.device_setpoint, hass)}\u00A0${unit}`);
               }
             }
+            if (closest.dehumidifying) parts.push(localize("analytics.dehumidify_period", l));
             if (closest.window_open) parts.push(localize("analytics.window_open_period", l));
             if (parts.length > 0) {
               markup += `<div style="border-top:1px solid rgba(128,128,128,0.3);margin-top:4px;padding-top:4px;color:rgba(255,255,255,0.7)">${parts.join(" \u00B7 ")}</div>`;

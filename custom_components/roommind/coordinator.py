@@ -60,6 +60,7 @@ from .managers.compressor_group_manager import (
     resolve_master_action,
 )
 from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
+from .managers.dehumidify_manager import DehumidifyManager
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.fan_speed_manager import FanSpeedManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
@@ -169,6 +170,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._valve_manager = ValveManager(hass)
         # Mold risk tracking
         self._mold_manager = MoldManager(hass)
+        # Active dehumidification (AC dry mode)
+        self._dehumidify_manager = DehumidifyManager(hass)
         # Residual heat tracking (heating → idle transition)
         self._residual_tracker = ResidualHeatTracker()
         # EKF training accumulation
@@ -306,12 +309,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 predicted = self._pending_predictions.pop(area_id, None)
                 # Record the AC's live fan speed (first AC in the room) so the
                 # chosen/auto-escalated speed shows up in analytics over time.
+                # In dry mode the AC locks fan control, but may keep reporting
+                # the last speed — record none, so analytics doesn't show a
+                # speed that isn't actually in effect.
+                dehumidifying = rs.get("dehumidifying", False)
                 fan_mode = ""
-                for _ac_eid in get_ac_eids(rooms.get(area_id, {}).get("devices", [])):
-                    _ac_state = self.hass.states.get(_ac_eid)
-                    if _ac_state and _ac_state.attributes.get("fan_mode"):
-                        fan_mode = str(_ac_state.attributes["fan_mode"])
-                        break
+                if not dehumidifying:
+                    for _ac_eid in get_ac_eids(rooms.get(area_id, {}).get("devices", [])):
+                        _ac_state = self.hass.states.get(_ac_eid)
+                        if _ac_state and _ac_state.attributes.get("fan_mode"):
+                            fan_mode = str(_ac_state.attributes["fan_mode"])
+                            break
                 try:
                     await self.hass.async_add_executor_job(
                         self._history_store.record,
@@ -323,6 +331,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "mode": mode,
                             "predicted_temp": predicted,
                             "window_open": rs.get("window_open", False),
+                            "dehumidifying": dehumidifying,
                             "heating_power": rs.get("heating_power", 0),
                             "solar_irradiance": round(self._current_q_solar, 3),
                             "blind_position": rs.get("blind_position"),
@@ -588,6 +597,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "mold_surface_rh": None,
                 "mold_prevention_active": False,
                 "mold_prevention_delta": 0,
+                "dehumidifying": False,
                 "shading_factor": 1.0,
                 "n_observations": 0,
                 "blind_position": None,
@@ -607,6 +617,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mold_prevention_active_room,
             mold_prevention_temp_delta,
         ) = await self._evaluate_mold_risk(area_id, current_temp, current_humidity, settings)
+
+        # --- Active dehumidification (AC dry mode) ---
+        # Independent of mold prevention above and evaluated before control:
+        # while drying, the room is withheld from the MPC command cycle.
+        dehumidifying = self._dehumidify_manager.evaluate(
+            area_id,
+            settings,
+            current_humidity,
+            get_ac_eids(room.get("devices", [])),
+        ).active
 
         # Load schedule blocks once — used for both target temp resolution and MPC lookahead.
         from .utils.schedule_utils import (
@@ -745,6 +765,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             room.get("window_close_delay", 0),
         )
         if window_open:
+            mode = MODE_IDLE
+            power_fraction = 0.0
+
+        # Dehumidification owns the AC while it runs: the MPC's heat/cool/idle
+        # intent has no meaning in dry mode, so drop it rather than let it race
+        # the dry command.
+        if dehumidifying:
             mode = MODE_IDLE
             power_fraction = 0.0
 
@@ -908,28 +935,40 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 compressor_forced_off=compressor_forced_off,
                 schedule_fan=schedule_fan,
             )
-            try:
-                await controller.async_apply(
-                    mode,
-                    targets,
-                    power_fraction=power_fraction,
-                    current_temp=current_temp,
-                    exclude_eids=cycling_eids,
-                    heating_boost_target=device_max_temp,
-                    ac_heating_boost_target=ac_device_max_temp,
-                    cooling_boost_target=device_min_temp,
-                    heat_source_plan=heat_source_plan,
-                    compressor_forced_on=compressor_forced_on or None,
-                    compressor_forced_off=compressor_forced_off or None,
-                    force_off=force_off,
-                    fan_overrides=fan_overrides or None,
-                )
-            except Exception:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Room '%s': climate service call failed",
+            if dehumidifying:
+                # Dry mode + the scheduled target, but no fan (the AC locks it
+                # while drying).  The cool target is preferred: drying is a
+                # warm-season job, and only the heat target carries the mold
+                # prevention delta, which has nothing to do with this.
+                dry_target = targets.cool if targets.cool is not None else targets.heat
+                await self._dehumidify_manager.async_apply(
                     area_id,
-                    exc_info=True,
+                    get_ac_eids(room.get("devices", [])),
+                    dry_target,
                 )
+            else:
+                try:
+                    await controller.async_apply(
+                        mode,
+                        targets,
+                        power_fraction=power_fraction,
+                        current_temp=current_temp,
+                        exclude_eids=cycling_eids,
+                        heating_boost_target=device_max_temp,
+                        ac_heating_boost_target=ac_device_max_temp,
+                        cooling_boost_target=device_min_temp,
+                        heat_source_plan=heat_source_plan,
+                        compressor_forced_on=compressor_forced_on or None,
+                        compressor_forced_off=compressor_forced_off or None,
+                        force_off=force_off,
+                        fan_overrides=fan_overrides or None,
+                    )
+                except Exception:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Room '%s': climate service call failed",
+                        area_id,
+                        exc_info=True,
+                    )
             # Update compressor group member states (always, even after failed apply)
             for eid in all_device_eids:
                 if self._compressor_manager.get_group_for_entity(eid) is None:
@@ -948,6 +987,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         "unknown",
                     )
                     self._compressor_manager.update_member(eid, actually_on)
+                elif dehumidifying and eid in get_ac_eids(room.get("devices", [])):
+                    # Drying runs the compressor even though mode reads idle.
+                    self._compressor_manager.update_member(eid, True)
                 elif mode != MODE_IDLE:
                     self._compressor_manager.update_member(eid, True)
                 else:
@@ -1007,6 +1049,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             power_fraction=power_fraction,
             window_open=window_open,
             raw_open=raw_open,
+            dehumidifying=dehumidifying,
             q_residual=q_residual,
             shading_factor=shading_factor,
             q_occupancy=q_occupancy,
@@ -1040,6 +1083,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mold_surface_rh=mold_surface_rh,
             mold_prevention_active_room=mold_prevention_active_room,
             mold_prevention_temp_delta=mold_prevention_temp_delta,
+            dehumidifying=dehumidifying,
             shading_factor=shading_factor,
             q_occupancy=q_occupancy,
             cover_eids=cover_eids,
@@ -1232,6 +1276,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         power_fraction: float,
         window_open: bool,
         raw_open: bool,
+        dehumidifying: bool,
         q_residual: float,
         shading_factor: float | None,
         q_occupancy: float,
@@ -1361,6 +1406,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 ekf_pf=ekf_pf,
                 window_open=window_open,
                 raw_open=raw_open,
+                dehumidifying=dehumidifying,
                 q_residual=q_residual_training,
                 shading_factor=shading_factor if shading_factor is not None else 0.0,
                 q_solar=self._current_q_solar,
@@ -1435,6 +1481,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         mold_surface_rh: float | None,
         mold_prevention_active_room: bool,
         mold_prevention_temp_delta: float,
+        dehumidifying: bool,
         shading_factor: float | None,
         q_occupancy: float,
         cover_eids: list[str],
@@ -1503,6 +1550,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "mold_surface_rh": (round(mold_surface_rh, 1) if mold_surface_rh is not None else None),
             "mold_prevention_active": mold_prevention_active_room,
             "mold_prevention_delta": mold_prevention_temp_delta,
+            "dehumidifying": dehumidifying,
             "shading_factor": shading_factor,
             "q_occupancy": q_occupancy,
             "n_observations": self._model_manager.get_n_observations(area_id),
@@ -1950,6 +1998,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._pending_predictions.pop(area_id, None)
         self._residual_tracker.remove_room(area_id)
         self._cover_orchestrator.remove_room(area_id)
+        self._dehumidify_manager.remove_room(area_id)
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)
         self._off_since.pop(area_id, None)

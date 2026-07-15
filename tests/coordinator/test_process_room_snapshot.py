@@ -59,6 +59,7 @@ NORMAL_ROOM_KEYS = {
     "mold_surface_rh",
     "mold_prevention_active",
     "mold_prevention_delta",
+    "dehumidifying",
     "shading_factor",
     "q_occupancy",
     "n_observations",
@@ -100,6 +101,7 @@ OUTDOOR_ROOM_KEYS = {
     "mold_surface_rh",
     "mold_prevention_active",
     "mold_prevention_delta",
+    "dehumidifying",
     "shading_factor",
     "n_observations",
     "blind_position",
@@ -147,6 +149,7 @@ class TestProcessRoomSnapshot:
         assert result["mold_risk_level"] == "ok"
         assert result["mold_prevention_active"] is False
         assert result["mold_prevention_delta"] == 0
+        assert result["dehumidifying"] is False
         assert result["q_occupancy"] == 0.0
 
     @pytest.mark.asyncio
