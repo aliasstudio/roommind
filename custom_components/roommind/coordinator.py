@@ -311,13 +311,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 # chosen/auto-escalated speed shows up in analytics over time.
                 # In dry mode the AC locks fan control, but may keep reporting
                 # the last speed — record none, so analytics doesn't show a
-                # speed that isn't actually in effect.
+                # speed that isn't actually in effect. Same for a powered-off
+                # unit: many integrations (e.g. TCL) keep the last fan_mode
+                # attribute after hvac_mode goes "off".
                 dehumidifying = rs.get("dehumidifying", False)
                 fan_mode = ""
                 if not dehumidifying:
                     for _ac_eid in get_ac_eids(rooms.get(area_id, {}).get("devices", [])):
                         _ac_state = self.hass.states.get(_ac_eid)
-                        if _ac_state and _ac_state.attributes.get("fan_mode"):
+                        if _ac_state and _ac_state.state != "off" and _ac_state.attributes.get("fan_mode"):
                             fan_mode = str(_ac_state.attributes["fan_mode"])
                             break
                 try:

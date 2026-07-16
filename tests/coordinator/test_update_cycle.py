@@ -363,6 +363,45 @@ class TestRoomMindCoordinator:
         assert len(record_calls) == 1
         assert record_calls[0][0][1] == "living_room_abc12345"
 
+    @pytest.mark.asyncio
+    async def test_fan_speed_not_recorded_when_ac_is_off(self, hass, mock_config_entry):
+        """A powered-off AC's stale fan_mode attribute must not reach history.
+
+        Some integrations (e.g. TCL) keep reporting the last fan speed after
+        hvac_mode goes "off" — recording it would show a fan speed in
+        analytics for a period where the unit isn't actually running.
+        """
+        from custom_components.roommind.const import HISTORY_WRITE_CYCLES
+
+        ac_room = {
+            **SAMPLE_ROOM,
+            "acs": ["climate.living_room_ac"],
+            "devices": [{"entity_id": "climate.living_room_ac", "type": "ac", "role": "auto"}],
+        }
+        store = _make_store_mock({"living_room_abc12345": ac_room})
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(
+            side_effect=make_mock_states_get(
+                extra={
+                    "climate.living_room_ac": ("off", {"fan_mode": "High", "hvac_modes": ["off", "cool"]}),
+                },
+            )
+        )
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        mock_history = MagicMock()
+        coordinator._history_store = mock_history
+        coordinator._history_write_count = HISTORY_WRITE_CYCLES - 1
+
+        await coordinator._async_update_data()
+
+        record_calls = [
+            c for c in hass.async_add_executor_job.call_args_list if len(c[0]) >= 1 and c[0][0] is mock_history.record
+        ]
+        assert len(record_calls) == 1
+        assert record_calls[0][0][2]["fan_mode"] == ""
+
 
 class TestCoverageGaps:
     """Tests covering uncovered coordinator lines."""
