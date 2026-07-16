@@ -398,9 +398,12 @@ export function buildChartOptions(
   const { hass, language: l, chartAnchor, rangeStart, rangeEnd } = ctx;
   const unit = tempUnit(hass);
 
+  // No axis "name" here: ECharts draws it just above the grid, where it
+  // collides with the card-header title above the chart (the clipped
+  // degree symbol the user reported). The card header already says
+  // "Temperature" and the tooltip shows the unit on hover.
   const yAxis: Record<string, unknown> = {
     type: "value",
-    name: unit,
   };
 
   if (visibleY.length > 0) {
