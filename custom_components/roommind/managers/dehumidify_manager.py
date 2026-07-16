@@ -22,8 +22,8 @@ from homeassistant.core import HomeAssistant
 
 from ..const import (
     DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD,
+    DEFAULT_DEHUMIDIFY_STOP_THRESHOLD,
     DEHUMIDIFY_HVAC_MODE,
-    DEHUMIDIFY_HYSTERESIS,
     DEHUMIDIFY_MIN_MINUTES,
     make_roommind_context,
 )
@@ -69,9 +69,11 @@ class DehumidifyManager:
     ) -> DehumidifyResult:
         """Decide whether *area_id* should be dehumidifying this cycle.
 
-        The threshold is global (like mold detection): every room with a
-        humidity reading and a dry-capable AC follows it.  Rooms that lack
-        either simply never activate.
+        The two thresholds are global (like mold detection): every room with a
+        humidity reading and a dry-capable AC follows them.  Rooms that lack
+        either simply never activate.  Drying starts at/above *start* and runs
+        until RH falls to/below *stop* — *stop* is the humidity level the user
+        wants the room brought down to.
         """
         result = DehumidifyResult()
 
@@ -79,13 +81,22 @@ class DehumidifyManager:
             self._deactivate(area_id)
             return result
 
-        threshold = float(
+        start = float(
             settings.get(
                 "dehumidify_humidity_threshold",
                 DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD,
             )
         )
-        result.threshold = threshold
+        stop = float(
+            settings.get(
+                "dehumidify_stop_threshold",
+                DEFAULT_DEHUMIDIFY_STOP_THRESHOLD,
+            )
+        )
+        # Guard against a misconfigured stop >= start, which would otherwise
+        # chatter: keep at least a 1% band below the start threshold.
+        stop = min(stop, start - 1.0)
+        result.threshold = start
 
         if current_humidity is None:
             self._deactivate(area_id)
@@ -105,23 +116,24 @@ class DehumidifyManager:
         now = time.time()
 
         if was_active:
-            # Hold until RH clears the hysteresis band *and* the compressor has
-            # had its minimum run — short dry bursts are hard on the hardware
-            # and barely move humidity.
+            # Hold until RH reaches the stop level *and* the compressor has had
+            # its minimum run — short dry bursts are hard on the hardware and
+            # barely move humidity.
             elapsed_minutes = (now - self._active_since.get(area_id, now)) / 60.0
-            if current_humidity <= threshold - DEHUMIDIFY_HYSTERESIS and elapsed_minutes >= DEHUMIDIFY_MIN_MINUTES:
+            if current_humidity <= stop and elapsed_minutes >= DEHUMIDIFY_MIN_MINUTES:
                 self._deactivate(area_id)
             else:
                 result.active = True
-        elif current_humidity >= threshold:
+        elif current_humidity >= start:
             self._active[area_id] = True
             self._active_since[area_id] = now
             result.active = True
             _LOGGER.debug(
-                "Room '%s': dehumidification on (RH %.0f%% >= %.0f%%)",
+                "Room '%s': dehumidification on (RH %.0f%% >= %.0f%%, drying to %.0f%%)",
                 area_id,
                 current_humidity,
-                threshold,
+                start,
+                stop,
             )
 
         return result

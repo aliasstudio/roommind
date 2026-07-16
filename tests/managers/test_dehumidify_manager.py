@@ -26,7 +26,11 @@ def dm(hass):
 
 
 def _settings(**overrides):
-    s = {"dehumidify_enabled": True, "dehumidify_humidity_threshold": 60.0}
+    s = {
+        "dehumidify_enabled": True,
+        "dehumidify_humidity_threshold": 60.0,
+        "dehumidify_stop_threshold": 55.0,
+    }
     s.update(overrides)
     return s
 
@@ -77,22 +81,40 @@ def test_unavailable_ac_never_activates(dm, hass):
     assert dm.evaluate("bedroom", _settings(), current_humidity=90.0, ac_eids=[AC]).active is False
 
 
-# --- hysteresis + minimum run ---
+# --- stop threshold + minimum run ---
 
 
-def test_stays_active_inside_hysteresis_band(dm):
-    """RH below the threshold but inside the band must not deactivate."""
+def test_stays_active_above_stop_threshold(dm):
+    """RH below start but still above the stop level must keep drying."""
     dm.evaluate("bedroom", _settings(), current_humidity=62.0, ac_eids=[AC])
     dm._active_since["bedroom"] -= 3600  # min run satisfied
-    # threshold 60, hysteresis 3 → must fall to <= 57 to clear
-    assert dm.evaluate("bedroom", _settings(), current_humidity=58.5, ac_eids=[AC]).active is True
+    # start 60, stop 55 → must fall to <= 55 to clear
+    assert dm.evaluate("bedroom", _settings(), current_humidity=57.0, ac_eids=[AC]).active is True
 
 
-def test_deactivates_below_hysteresis_band(dm):
+def test_deactivates_at_stop_threshold(dm):
     dm.evaluate("bedroom", _settings(), current_humidity=62.0, ac_eids=[AC])
     dm._active_since["bedroom"] -= 3600
-    assert dm.evaluate("bedroom", _settings(), current_humidity=56.0, ac_eids=[AC]).active is False
+    assert dm.evaluate("bedroom", _settings(), current_humidity=54.0, ac_eids=[AC]).active is False
     assert dm.is_active("bedroom") is False
+
+
+def test_custom_stop_threshold_is_respected(dm):
+    """A lower stop threshold means drying continues further down."""
+    s = _settings(dehumidify_stop_threshold=45.0)
+    dm.evaluate("bedroom", s, current_humidity=62.0, ac_eids=[AC])
+    dm._active_since["bedroom"] -= 3600
+    assert dm.evaluate("bedroom", s, current_humidity=50.0, ac_eids=[AC]).active is True
+    assert dm.evaluate("bedroom", s, current_humidity=44.0, ac_eids=[AC]).active is False
+
+
+def test_stop_above_start_is_clamped_to_avoid_chatter(dm):
+    """A misconfigured stop >= start must not cause immediate on/off flapping."""
+    s = _settings(dehumidify_humidity_threshold=60.0, dehumidify_stop_threshold=65.0)
+    dm.evaluate("bedroom", s, current_humidity=62.0, ac_eids=[AC])
+    dm._active_since["bedroom"] -= 3600
+    # stop clamped to start-1 = 59; at 62 it must stay active, not flap off
+    assert dm.evaluate("bedroom", s, current_humidity=62.0, ac_eids=[AC]).active is True
 
 
 def test_min_run_holds_mode_despite_dry_air(dm):
