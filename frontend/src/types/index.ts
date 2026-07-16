@@ -181,6 +181,7 @@ export interface GlobalSettings {
   mold_prevention_notify_targets?: NotificationTarget[];
   dehumidify_enabled?: boolean;
   dehumidify_humidity_threshold?: number;
+  dehumidify_stop_threshold?: number;
   compressor_groups?: CompressorGroup[];
   room_order?: string[];
   group_by_floor?: boolean;
@@ -244,6 +245,7 @@ export interface AnalyticsDataPoint {
   target_temp: number | null;
   mode: string;
   predicted_temp: number | null;
+  humidity?: number | null;
   window_open: boolean;
   dehumidifying?: boolean;
   heating_power: number | null;
@@ -279,6 +281,11 @@ export interface AnalyticsData {
     prediction_std_idle: number;
     prediction_std_heating: number;
     has_occupancy_sensors: boolean;
+  };
+  dehumidify?: {
+    enabled: boolean;
+    threshold: number;
+    stop: number;
   };
 }
 

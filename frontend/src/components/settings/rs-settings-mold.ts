@@ -20,6 +20,7 @@ export class RsSettingsMold extends RsSettingsBase {
     "medium";
   @property({ type: Boolean }) public dehumidifyEnabled = false;
   @property({ type: Number }) public dehumidifyThreshold = 60;
+  @property({ type: Number }) public dehumidifyStopThreshold = 55;
 
   render() {
     const l = this.hass.language;
@@ -203,6 +204,22 @@ export class RsSettingsMold extends RsSettingsBase {
                     }}
                   ></ha-textfield>
                   <span class="field-hint">${localize("mold.dehumidify_threshold_hint", l)}</span>
+                </div>
+                <div class="threshold-field">
+                  <ha-textfield
+                    .value=${String(this.dehumidifyStopThreshold)}
+                    .label=${localize("mold.dehumidify_stop", l)}
+                    .suffix=${"%"}
+                    type="number"
+                    step="1"
+                    min="25"
+                    max="90"
+                    @change=${(e: Event) => {
+                      const v = parseFloat((e.target as HTMLInputElement).value);
+                      if (!isNaN(v) && v >= 25 && v <= 90) this._fire("dehumidifyStopThreshold", v);
+                    }}
+                  ></ha-textfield>
+                  <span class="field-hint">${localize("mold.dehumidify_stop_hint", l)}</span>
                 </div>
               </div>
             `

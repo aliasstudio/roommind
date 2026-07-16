@@ -14,6 +14,8 @@ from ..const import (
     CLIMATE_MODE_HEAT_ONLY,
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
+    DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD,
+    DEFAULT_DEHUMIDIFY_STOP_THRESHOLD,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
 )
@@ -62,6 +64,7 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
                 "target_temp": _safe_float(row.get("target_temp", "")),
                 "mode": row.get("mode", ""),
                 "predicted_temp": _safe_float(row.get("predicted_temp", "")),
+                "humidity": _safe_float(row.get("humidity", "")),
                 "window_open": row.get("window_open", "") in ("True", "true", "1"),
                 "dehumidifying": row.get("dehumidifying", "") in ("True", "true", "1"),
                 "heating_power": _safe_float(row.get("heating_power", "")),
@@ -387,4 +390,15 @@ async def build_analytics_data(
         "history": history,
         "model": model_info,
         "forecast": forecast,
+        "dehumidify": {
+            "enabled": bool(settings.get("dehumidify_enabled", False)),
+            "threshold": settings.get(
+                "dehumidify_humidity_threshold",
+                DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD,
+            ),
+            "stop": settings.get(
+                "dehumidify_stop_threshold",
+                DEFAULT_DEHUMIDIFY_STOP_THRESHOLD,
+            ),
+        },
     }

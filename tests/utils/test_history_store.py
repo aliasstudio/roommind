@@ -180,6 +180,24 @@ def test_dehumidifying_in_csv(history_dir):
     assert rows[1]["dehumidifying"] == "False"
 
 
+def test_humidity_in_csv(history_dir):
+    """humidity field is written and read back."""
+    store = HistoryStore(history_dir)
+    store.record(
+        "room_a",
+        {
+            "room_temp": 24.0,
+            "outdoor_temp": 25.0,
+            "target_temp": 24.0,
+            "mode": "cooling",
+            "predicted_temp": 24.0,
+            "humidity": 63.0,
+        },
+    )
+    rows = store.read_detail("room_a")
+    assert rows[0]["humidity"] == "63.0"
+
+
 def test_existing_csv_without_dehumidifying_column_migrates(history_dir):
     """A CSV written before the column existed keeps its rows and gains the field.
 

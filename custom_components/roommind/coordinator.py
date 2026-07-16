@@ -330,6 +330,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "target_temp": target_temp,
                             "mode": mode,
                             "predicted_temp": predicted,
+                            "humidity": rs.get("current_humidity"),
                             "window_open": rs.get("window_open", False),
                             "dehumidifying": dehumidifying,
                             "heating_power": rs.get("heating_power", 0),

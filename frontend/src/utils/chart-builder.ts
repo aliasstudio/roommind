@@ -62,6 +62,29 @@ export interface ChartBuildContext {
   rangeEnd: number;
   forecast?: AnalyticsDataPoint[];
   isOutdoor?: boolean;
+  dehumidifyThreshold?: number;
+  dehumidifyStop?: number;
+}
+
+/**
+ * Assign right-hand y-axis indices for the humidity and fan-speed series.
+ *
+ * Both live on the right, but each only appears when its data is present, so
+ * the indices are computed the same way in both the series and the options
+ * builders (both receive the full point set) to keep them in lockstep. A
+ * missing series gets -1 and no axis is emitted for it.
+ */
+export function rightAxisLayout(points: AnalyticsDataPoint[]): {
+  humidityIndex: number;
+  fanIndex: number;
+} {
+  const hasHumidity = points.some((p) => p.humidity != null);
+  const hasFan = fanLevelNames(points).size > 0;
+  let next = 1;
+  return {
+    humidityIndex: hasHumidity ? next++ : -1,
+    fanIndex: hasFan ? next++ : -1,
+  };
 }
 
 export function buildChartSeries(
@@ -269,14 +292,70 @@ export function buildChartSeries(
     });
   }
 
-  // Fan-speed stepped line on the secondary (right) axis
+  const { humidityIndex, fanIndex } = rightAxisLayout(points);
+
+  // Humidity line on its own right axis, with markers at the dehumidify
+  // start/stop levels so the drying band is legible: RH climbs past the start
+  // line, the purple band appears, RH is pulled down to the stop line.
+  if (humidityIndex >= 0) {
+    const humidityData: Array<[number, number]> = [];
+    for (const p of points) {
+      if (p.humidity != null) humidityData.push([p.ts * 1000, p.humidity]);
+    }
+    const start = ctx.dehumidifyThreshold;
+    const stop = ctx.dehumidifyStop;
+    const markData: Array<Record<string, unknown>> = [];
+    if (start != null) {
+      markData.push({
+        yAxis: start,
+        label: {
+          formatter: `${localize("analytics.dehumidify_threshold", l)} ${start}%`,
+          fontSize: 10,
+          position: "insideEndTop",
+        },
+      });
+    }
+    if (stop != null) {
+      markData.push({
+        yAxis: stop,
+        label: {
+          formatter: `${localize("analytics.dehumidify_target", l)} ${stop}%`,
+          fontSize: 10,
+          position: "insideEndBottom",
+        },
+      });
+    }
+    series.push({
+      id: "humidity",
+      type: "line",
+      name: localize("analytics.humidity", l),
+      color: "rgb(3, 169, 244)",
+      data: humidityData,
+      showSymbol: false,
+      smooth: true,
+      lineStyle: { width: 1.5 },
+      yAxisIndex: humidityIndex,
+      ...(markData.length > 0
+        ? {
+            markLine: {
+              silent: true,
+              symbol: "none",
+              lineStyle: { color: "rgba(156, 39, 176, 0.6)", type: "dashed", width: 1 },
+              data: markData,
+            },
+          }
+        : {}),
+    });
+  }
+
+  // Fan-speed stepped line on its own right axis
   const fanData: Array<[number, number]> = [];
   for (const p of points) {
     if (!p.fan_mode) continue;
     const rank = fanRank(p.fan_mode);
     if (rank !== null) fanData.push([p.ts * 1000, rank]);
   }
-  if (fanData.length > 0) {
+  if (fanData.length > 0 && fanIndex >= 0) {
     series.push({
       id: "fan_speed",
       type: "line",
@@ -287,7 +366,7 @@ export function buildChartSeries(
       step: "end",
       smooth: false,
       lineStyle: { width: 1.5 },
-      yAxisIndex: 1,
+      yAxisIndex: fanIndex,
     });
   }
 
@@ -339,27 +418,48 @@ export function buildChartOptions(
 
   const isLive = Math.abs(rangeEnd - Date.now()) < 3600_000;
 
-  // Secondary axis for the stepped fan-speed series, with speed names as ticks.
-  const fanNames = fanLevelNames(points);
-  let yAxisOpt: unknown = yAxis;
-  if (fanNames.size > 0) {
-    const maxLevel = Math.max(...fanNames.keys());
-    yAxisOpt = [
-      yAxis,
-      {
-        type: "value",
-        position: "right",
-        min: 0.5,
-        max: maxLevel + 0.5,
-        interval: 1,
-        splitLine: { show: false },
-        axisLabel: {
-          formatter: (v: number) => fanNames.get(v) ?? "",
-          fontSize: 10,
-        },
-      },
-    ];
+  // Right-hand axes: humidity (%) and stepped fan-speed, each present only when
+  // its data is. rightAxisLayout assigns the indices; the axis array is built
+  // in the same order so yAxisIndex references line up. When both are present
+  // the second is pushed further right with an offset.
+  const { humidityIndex, fanIndex } = rightAxisLayout(points);
+  const axes: unknown[] = [yAxis];
+  const rightCount = (humidityIndex >= 0 ? 1 : 0) + (fanIndex >= 0 ? 1 : 0);
+  let rightsPlaced = 0;
+
+  if (humidityIndex >= 0) {
+    axes.push({
+      type: "value",
+      position: "right",
+      offset: rightsPlaced > 0 ? 48 : 0,
+      min: 0,
+      max: 100,
+      splitLine: { show: false },
+      axisLabel: { formatter: "{value}%", fontSize: 10 },
+    });
+    rightsPlaced++;
   }
+
+  if (fanIndex >= 0) {
+    const fanNames = fanLevelNames(points);
+    const maxLevel = Math.max(...fanNames.keys());
+    axes.push({
+      type: "value",
+      position: "right",
+      offset: rightsPlaced > 0 ? 48 : 0,
+      min: 0.5,
+      max: maxLevel + 0.5,
+      interval: 1,
+      splitLine: { show: false },
+      axisLabel: {
+        formatter: (v: number) => fanNames.get(v) ?? "",
+        fontSize: 10,
+      },
+    });
+    rightsPlaced++;
+  }
+
+  const yAxisOpt: unknown = rightCount > 0 ? axes : yAxis;
 
   return {
     xAxis: {
@@ -400,7 +500,9 @@ export function buildChartOptions(
           if (p.seriesId === "fan_speed") continue;
           const v = p.value?.[1];
           if (v == null) continue;
-          markup += `<div>${p.color ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>` : ""}${p.seriesName}: ${v.toFixed(1)}\u00A0${unit}</div>`;
+          // Humidity is a percentage, not \u00B0C \u2014 format it with its own unit.
+          const vUnit = p.seriesId === "humidity" ? "%" : `\u00A0${unit}`;
+          markup += `<div>${p.color ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>` : ""}${p.seriesName}: ${v.toFixed(p.seriesId === "humidity" ? 0 : 1)}${vUnit}</div>`;
           if (p.seriesId === "room_temp") roomVal = v;
           if (p.seriesId === "predicted_temp") predVal = v;
         }

@@ -38,6 +38,10 @@ export class RsAnalyticsChart extends LitElement {
       rangeEnd: this.rangeEnd,
       forecast: this.data?.forecast,
       isOutdoor: this.isOutdoor,
+      dehumidifyThreshold: this.data?.dehumidify?.enabled
+        ? this.data.dehumidify.threshold
+        : undefined,
+      dehumidifyStop: this.data?.dehumidify?.enabled ? this.data.dehumidify.stop : undefined,
     };
     const allSeries = points.length > 0 ? buildChartSeries(points, chartCtx) : [];
 
@@ -56,7 +60,7 @@ export class RsAnalyticsChart extends LitElement {
         }
         return hidden;
       }
-      if (!isEvent && id !== "now_marker" && id !== "fan_speed") {
+      if (!isEvent && id !== "now_marker" && id !== "fan_speed" && id !== "humidity") {
         for (const point of s.data as Array<[number, number]>) {
           if (point && point[1] != null) {
             visibleY.push(point[1]);

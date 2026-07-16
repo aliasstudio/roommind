@@ -124,8 +124,8 @@ MIN_MOLD_GROWTH_TEMP = 5.0  # °C — below this surface temp, mold risk negligi
 # Active dehumidification — drives an AC's "dry" hvac_mode off room air RH.
 # Independent of mold prevention above: that one *raises* the heat target to
 # warm cold surfaces, this one runs the compressor to pull water out of the air.
-DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD = 60.0  # room air RH % — activation threshold
-DEHUMIDIFY_HYSTERESIS = 3.0  # RH must drop this much below threshold to deactivate
+DEFAULT_DEHUMIDIFY_HUMIDITY_THRESHOLD = 60.0  # room air RH % — start drying at/above this
+DEFAULT_DEHUMIDIFY_STOP_THRESHOLD = 55.0  # room air RH % — stop drying at/below this
 DEHUMIDIFY_MIN_MINUTES = 10.0  # minimum time in dry mode — protects the compressor
 DEHUMIDIFY_HVAC_MODE = "dry"
 

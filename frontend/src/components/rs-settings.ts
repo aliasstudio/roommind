@@ -66,6 +66,7 @@ export class RsSettings extends LitElement {
   @state() private _moldPreventionNotify = false;
   @state() private _dehumidifyEnabled = false;
   @state() private _dehumidifyThreshold = 60;
+  @state() private _dehumidifyStopThreshold = 55;
   @state() private _compressorGroups: CompressorGroup[] = [];
   @state() private _boostAppliedAt: Record<string, number> = {};
   @state() private _loaded = false;
@@ -126,6 +127,7 @@ export class RsSettings extends LitElement {
       this._moldPreventionNotify = s.mold_prevention_notify_enabled ?? false;
       this._dehumidifyEnabled = s.dehumidify_enabled ?? false;
       this._dehumidifyThreshold = s.dehumidify_humidity_threshold ?? 60;
+      this._dehumidifyStopThreshold = s.dehumidify_stop_threshold ?? 55;
       this._compressorGroups = s.compressor_groups ?? [];
       this._boostAppliedAt = s.boost_applied_at ?? {};
     } catch (err) {
@@ -257,6 +259,7 @@ export class RsSettings extends LitElement {
           .moldPreventionIntensity=${this._moldPreventionIntensity}
           .dehumidifyEnabled=${this._dehumidifyEnabled}
           .dehumidifyThreshold=${this._dehumidifyThreshold}
+          .dehumidifyStopThreshold=${this._dehumidifyStopThreshold}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-mold>
       </rs-settings-panel>
@@ -376,6 +379,7 @@ export class RsSettings extends LitElement {
           : [],
         dehumidify_enabled: this._dehumidifyEnabled,
         dehumidify_humidity_threshold: this._dehumidifyThreshold,
+        dehumidify_stop_threshold: this._dehumidifyStopThreshold,
       });
       fireSaveStatus(this, "saved");
     } catch {
