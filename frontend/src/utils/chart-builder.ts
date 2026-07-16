@@ -340,7 +340,7 @@ export function buildChartSeries(
             markLine: {
               silent: true,
               symbol: "none",
-              lineStyle: { color: "rgba(156, 39, 176, 0.6)", type: "dashed", width: 1 },
+              lineStyle: { color: "rgba(3, 169, 244, 0.55)", type: "dashed", width: 1 },
               data: markData,
             },
           }
