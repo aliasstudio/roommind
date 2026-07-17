@@ -210,23 +210,23 @@ def resolve_schedule_fan(schedule_blocks: dict | None, ts: float) -> dict[str, s
     return override or None
 
 
-def resolve_schedule_dehumidify_cool(schedule_blocks: dict | None, ts: float) -> bool:
-    """Return True when the active schedule block wants dehumidification via Cool.
+def resolve_schedule_dehumidify_off(schedule_blocks: dict | None, ts: float) -> bool:
+    """Return True when the active schedule slot turns dehumidification off.
 
-    Reads a ``dehumidify_cool`` flag from the active block's ``data`` (set in the
-    schedule YAML). When true, dehumidification runs the AC in Cool mode instead
-    of Dry for that slot — e.g. overnight, where Dry's fixed program overcools.
-    Absent/false slots keep the default Dry mode.
+    Reads a ``dehumidify`` flag from the active block's ``data`` (set in the
+    schedule YAML). ``dehumidify: false`` disables dehumidification for that
+    slot — e.g. overnight — handing the room back to normal climate control so
+    the AC's Dry program can't overcool. Absent or true keeps it enabled.
     """
     if schedule_blocks is None:
         return False
     data = find_active_block(schedule_blocks, ts)
     if not data:
         return False
-    val = data.get("dehumidify_cool", False)
+    val = data.get("dehumidify", True)
     if isinstance(val, str):
-        return val.strip().lower() in ("true", "1", "yes", "on")
-    return bool(val)
+        return val.strip().lower() in ("false", "0", "no", "off")
+    return not bool(val)
 
 
 def resolve_schedule_index(

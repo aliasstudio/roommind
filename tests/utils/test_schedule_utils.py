@@ -18,7 +18,7 @@ from custom_components.roommind.utils.schedule_utils import (
     get_active_schedule_entity,
     make_target_resolver,
     read_schedule_blocks,
-    resolve_schedule_dehumidify_cool,
+    resolve_schedule_dehumidify_off,
     resolve_schedule_fan,
     resolve_schedule_idle,
     resolve_schedule_index,
@@ -83,37 +83,43 @@ def test_resolve_schedule_fan_none_blocks():
 
 
 # ---------------------------------------------------------------------------
-# resolve_schedule_dehumidify_cool
+# resolve_schedule_dehumidify_off
 # ---------------------------------------------------------------------------
 
-_COOL_BLOCKS = {
+_DH_BLOCKS = {
     "monday": [
-        {"from": "00:00:00", "to": "08:00:00", "data": {"dehumidify_cool": True}},
+        {"from": "00:00:00", "to": "08:00:00", "data": {"dehumidify": False}},
         {"from": "08:00:00", "to": "23:59:59", "data": {"temperature": 22}},
     ]
 }
 
 
-def test_dehumidify_cool_none_blocks():
-    assert resolve_schedule_dehumidify_cool(None, _MON_NIGHT) is False
+def test_dehumidify_off_none_blocks():
+    assert resolve_schedule_dehumidify_off(None, _MON_NIGHT) is False
 
 
-def test_dehumidify_cool_night_true():
-    assert resolve_schedule_dehumidify_cool(_COOL_BLOCKS, _MON_NIGHT) is True
+def test_dehumidify_off_night_true():
+    assert resolve_schedule_dehumidify_off(_DH_BLOCKS, _MON_NIGHT) is True
 
 
-def test_dehumidify_cool_day_false():
-    assert resolve_schedule_dehumidify_cool(_COOL_BLOCKS, _MON_DAY) is False
+def test_dehumidify_off_day_false_when_absent():
+    # Day slot has no dehumidify key → dehumidification stays enabled.
+    assert resolve_schedule_dehumidify_off(_DH_BLOCKS, _MON_DAY) is False
 
 
-def test_dehumidify_cool_string_true():
-    blocks = {"monday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify_cool": "true"}}]}
-    assert resolve_schedule_dehumidify_cool(blocks, _MON_DAY) is True
+def test_dehumidify_off_string_false():
+    blocks = {"monday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify": "false"}}]}
+    assert resolve_schedule_dehumidify_off(blocks, _MON_DAY) is True
 
 
-def test_dehumidify_cool_no_active_block():
-    blocks = {"tuesday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify_cool": True}}]}
-    assert resolve_schedule_dehumidify_cool(blocks, _MON_DAY) is False
+def test_dehumidify_off_explicit_true_stays_enabled():
+    blocks = {"monday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify": True}}]}
+    assert resolve_schedule_dehumidify_off(blocks, _MON_DAY) is False
+
+
+def test_dehumidify_off_no_active_block():
+    blocks = {"tuesday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify": False}}]}
+    assert resolve_schedule_dehumidify_off(blocks, _MON_DAY) is False
 
 
 def test_resolve_schedule_fan_night_cap():

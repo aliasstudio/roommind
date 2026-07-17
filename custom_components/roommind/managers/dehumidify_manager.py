@@ -154,13 +154,8 @@ class DehumidifyManager:
         ac_eids: list[str],
         target_temp: float | None = None,
         fan_caps: dict[str, str] | None = None,
-        hvac_mode: str = DEHUMIDIFY_HVAC_MODE,
     ) -> None:
-        """Drive every capable AC in *area_id* for dehumidification.
-
-        *hvac_mode* is "dry" by default; a schedule slot can ask for "cool"
-        instead (``dehumidify_cool`` overnight), where the AC's thermostat stops
-        at the target instead of Dry's fixed program that overcools.
+        """Drive every dry-capable AC in *area_id* into dry mode.
 
         *target_temp* (°C) is the room's scheduled target, passed through so the
         AC dries toward the temperature the user actually asked for.  The MPC's
@@ -177,22 +172,21 @@ class DehumidifyManager:
         fan_caps = fan_caps or {}
         for eid in ac_eids:
             state = self.hass.states.get(eid)
-            if not _supports_mode(state, hvac_mode):
+            if not supports_dry(state):
                 continue
-            if state is None or state.state != hvac_mode:
+            if state is None or state.state != DEHUMIDIFY_HVAC_MODE:
                 try:
                     await self.hass.services.async_call(
                         "climate",
                         "set_hvac_mode",
-                        {"entity_id": eid, "hvac_mode": hvac_mode},
+                        {"entity_id": eid, "hvac_mode": DEHUMIDIFY_HVAC_MODE},
                         blocking=True,
                         context=make_roommind_context(),
                     )
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning(
-                        "Area '%s': climate.set_hvac_mode(%s) failed on '%s'",
+                        "Area '%s': climate.set_hvac_mode(dry) failed on '%s'",
                         area_id,
-                        hvac_mode,
                         eid,
                         exc_info=True,
                     )
