@@ -148,6 +148,7 @@ class DehumidifyManager:
         area_id: str,
         ac_eids: list[str],
         target_temp: float | None = None,
+        fan_caps: dict[str, str] | None = None,
     ) -> None:
         """Put every dry-capable AC in *area_id* into dry mode.
 
@@ -157,8 +158,14 @@ class DehumidifyManager:
         driven down to min_temp to force cooling, which would freeze the room
         for what is a humidity job.
 
-        Fan speed is never sent — ACs lock fan control while drying.
+        *fan_caps* maps entity_id -> a fan-speed label (the effective
+        ``fan_max_mode`` from the schedule/device).  Unlike a true dehumidifier,
+        this AC keeps its fan controllable in dry mode and otherwise runs it on
+        Auto — which blows hard and makes the room feel cold.  Setting the fan
+        to the configured ceiling keeps drying quiet and gentle.  No entry (or
+        no cap configured) leaves the fan on the AC's own dry program.
         """
+        fan_caps = fan_caps or {}
         for eid in ac_eids:
             state = self.hass.states.get(eid)
             if not supports_dry(state):
@@ -182,6 +189,9 @@ class DehumidifyManager:
                     continue
             if target_temp is not None:
                 await self._async_set_target(area_id, eid, target_temp)
+            cap = fan_caps.get(eid)
+            if cap:
+                await self._async_set_fan(area_id, eid, cap)
 
     async def _async_set_target(self, area_id: str, entity_id: str, target_c: float) -> None:
         """Send the scheduled target to a drying AC, clamped to its own limits.
@@ -217,6 +227,38 @@ class DehumidifyManager:
                 "Area '%s': climate.set_temperature(%.1f) failed on '%s' while drying",
                 area_id,
                 setpoint,
+                entity_id,
+                exc_info=True,
+            )
+
+    async def _async_set_fan(self, area_id: str, entity_id: str, fan_mode: str) -> None:
+        """Cap the drying AC's fan speed. Best-effort, skipped when unsupported."""
+        state = self.hass.states.get(entity_id)
+        fan_modes = (state.attributes.get("fan_modes") or []) if state else []
+        if fan_mode not in fan_modes:
+            _LOGGER.debug(
+                "Area '%s': device '%s' does not support fan_mode '%s' (available: %s)",
+                area_id,
+                entity_id,
+                fan_mode,
+                fan_modes,
+            )
+            return
+        if state is not None and state.attributes.get("fan_mode") == fan_mode:
+            return
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_fan_mode",
+                {"entity_id": entity_id, "fan_mode": fan_mode},
+                blocking=True,
+                context=make_roommind_context(),
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning(
+                "Area '%s': climate.set_fan_mode('%s') failed on '%s' while drying",
+                area_id,
+                fan_mode,
                 entity_id,
                 exc_info=True,
             )

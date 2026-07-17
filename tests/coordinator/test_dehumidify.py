@@ -33,12 +33,12 @@ DEHUMIDIFY_ROOM = {
 DEHUMIDIFY_SETTINGS = {"dehumidify_enabled": True, "dehumidify_humidity_threshold": 60.0}
 
 
-def _states_get(humidity="65.0", hvac_modes=("off", "cool", "dry", "fan_only"), ac_state="cool"):
+def _states_get(humidity="65.0", hvac_modes=("off", "cool", "dry", "fan_only"), ac_state="cool", fan_mode="low"):
     return make_mock_states_get(
         temp="24.0",
         humidity=humidity,
         outdoor_temp="25.0",
-        extra={AC: (ac_state, {"hvac_modes": list(hvac_modes), "fan_modes": ["low", "high"], "fan_mode": "low"})},
+        extra={AC: (ac_state, {"hvac_modes": list(hvac_modes), "fan_modes": ["low", "high"], "fan_mode": fan_mode})},
     )
 
 
@@ -110,11 +110,34 @@ class TestDehumidifyActivation:
 
 class TestDehumidifyOwnsTheDevice:
     @pytest.mark.asyncio
-    async def test_fan_speed_is_never_commanded_while_drying(self, hass, mock_config_entry):
-        """ACs lock fan control in dry mode — sending a speed is a failed call."""
+    async def test_fan_not_capped_when_no_max_configured(self, hass, mock_config_entry):
+        """With no fan_max_mode configured, the AC keeps its own dry fan."""
         _, _, services = await _run(hass, mock_config_entry, _states_get(humidity="65.0"))
 
         assert _calls(services, "set_fan_mode") == []
+
+    @pytest.mark.asyncio
+    async def test_dry_fan_capped_to_device_fan_max_mode(self, hass, mock_config_entry):
+        """A device fan_max_mode caps the dry-mode fan so it isn't loud/cold."""
+        room = {
+            **DEHUMIDIFY_ROOM,
+            "devices": [
+                {
+                    "entity_id": AC,
+                    "type": "ac",
+                    "role": "auto",
+                    "fan_control": "auto",
+                    "fan_max_mode": "low",
+                }
+            ],
+        }
+        _, _, services = await _run(
+            hass, mock_config_entry, _states_get(humidity="65.0", fan_mode="high"), room=room
+        )
+
+        fan = _calls(services, "set_fan_mode")
+        assert len(fan) == 1
+        assert fan[0].args[2] == {"entity_id": AC, "fan_mode": "low"}
 
     @pytest.mark.asyncio
     async def test_mode_reads_idle_so_mpc_intent_does_not_leak(self, hass, mock_config_entry):
