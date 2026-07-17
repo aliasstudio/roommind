@@ -150,11 +150,41 @@ async def test_apply_sends_dry_mode(dm, hass):
 
 
 @pytest.mark.asyncio
-async def test_apply_never_sends_fan_mode(dm, hass):
-    """Fan speed is locked while drying — we must not touch it."""
+async def test_apply_without_cap_leaves_fan_alone(dm, hass):
+    """No fan cap configured — the AC keeps its own dry-mode fan program."""
     await dm.async_apply("bedroom", [AC])
     for call in hass.services.async_call.await_args_list:
         assert call.args[1] != "set_fan_mode"
+
+
+def _fan_calls(hass):
+    return [c for c in hass.services.async_call.await_args_list if c.args[1] == "set_fan_mode"]
+
+
+@pytest.mark.asyncio
+async def test_apply_caps_fan_when_configured(dm, hass):
+    """A configured fan cap is sent so drying stays quiet instead of Auto."""
+    hass.states.get = MagicMock(return_value=_ac_state(fan_modes=["Mute", "Low", "High"], fan_mode="High"))
+    await dm.async_apply("bedroom", [AC], fan_caps={AC: "Mute"})
+    calls = _fan_calls(hass)
+    assert len(calls) == 1
+    assert calls[0].args[2] == {"entity_id": AC, "fan_mode": "Mute"}
+
+
+@pytest.mark.asyncio
+async def test_apply_skips_unsupported_fan_cap(dm, hass):
+    """A cap the device doesn't list is skipped, not sent blindly."""
+    hass.states.get = MagicMock(return_value=_ac_state(fan_modes=["Low", "High"], fan_mode="High"))
+    await dm.async_apply("bedroom", [AC], fan_caps={AC: "Mute"})
+    assert _fan_calls(hass) == []
+
+
+@pytest.mark.asyncio
+async def test_apply_skips_fan_cap_already_set(dm, hass):
+    """Don't re-send a cap the AC already holds."""
+    hass.states.get = MagicMock(return_value=_ac_state(fan_modes=["Mute", "High"], fan_mode="Mute"))
+    await dm.async_apply("bedroom", [AC], fan_caps={AC: "Mute"})
+    assert _fan_calls(hass) == []
 
 
 @pytest.mark.asyncio

@@ -939,15 +939,27 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 schedule_fan=schedule_fan,
             )
             if dehumidifying:
-                # Dry mode + the scheduled target, but no fan (the AC locks it
-                # while drying).  The cool target is preferred: drying is a
-                # warm-season job, and only the heat target carries the mold
-                # prevention delta, which has nothing to do with this.
+                # Dry mode + the scheduled target.  The cool target is
+                # preferred: drying is a warm-season job, and only the heat
+                # target carries the mold prevention delta, which has nothing
+                # to do with this.
                 dry_target = targets.cool if targets.cool is not None else targets.heat
+                # Cap the dry-mode fan to the effective fan_max_mode (schedule
+                # slot wins over device config).  On Auto the AC blows hard and
+                # feels cold; the ceiling keeps drying quiet and gentle.
+                _dh_devices = room.get("devices", [])
+                _dh_acs = get_ac_eids(_dh_devices)
+                dry_fan_caps: dict[str, str] = {}
+                for _eid in _dh_acs:
+                    _, _, _max_label = get_fan_control(_dh_devices, _eid)
+                    _cap = (schedule_fan or {}).get("fan_max_mode", _max_label)
+                    if _cap:
+                        dry_fan_caps[_eid] = _cap
                 await self._dehumidify_manager.async_apply(
                     area_id,
-                    get_ac_eids(room.get("devices", [])),
+                    _dh_acs,
                     dry_target,
+                    dry_fan_caps or None,
                 )
             else:
                 try:
