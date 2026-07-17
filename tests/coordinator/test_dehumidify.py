@@ -131,9 +131,7 @@ class TestDehumidifyOwnsTheDevice:
                 }
             ],
         }
-        _, _, services = await _run(
-            hass, mock_config_entry, _states_get(humidity="65.0", fan_mode="high"), room=room
-        )
+        _, _, services = await _run(hass, mock_config_entry, _states_get(humidity="65.0", fan_mode="high"), room=room)
 
         fan = _calls(services, "set_fan_mode")
         assert len(fan) == 1
@@ -145,6 +143,50 @@ class TestDehumidifyOwnsTheDevice:
 
         assert state["mode"] == "idle"
         assert state["heating_power"] == 0
+
+
+class TestDehumidifyScheduleCool:
+    """A schedule slot with dehumidify_cool: true dries via Cool, not Dry."""
+
+    def _run_with_schedule(self, hass, mock_config_entry, block_data):
+        store = _make_store_mock({DEHUMIDIFY_ROOM["area_id"]: DEHUMIDIFY_ROOM}, settings=DEHUMIDIFY_SETTINGS)
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=_states_get(humidity="65.0", fan_mode="high", ac_state="off"))
+
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        blocks = {d: [{"from": "00:00:00", "to": "23:59:59", "data": block_data}] for d in days}
+
+        async def mock_service_call(domain, service, data=None, **kwargs):
+            if domain == "schedule" and service == "get_schedule":
+                eid = (data or {}).get("entity_id", "")
+                return {eid: blocks}
+            return None
+
+        hass.services.async_call = AsyncMock(side_effect=mock_service_call)
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        return coordinator, hass.services.async_call
+
+    @pytest.mark.asyncio
+    async def test_cool_flag_drives_cool_mode(self, hass, mock_config_entry):
+        coordinator, services = self._run_with_schedule(
+            hass, mock_config_entry, {"cool_temperature": 24.0, "dehumidify_cool": True}
+        )
+        await coordinator._async_update_data()
+
+        modes = [c for c in services.await_args_list if c.args[1] == "set_hvac_mode"]
+        sent = [c.args[2].get("hvac_mode") for c in modes]
+        assert "cool" in sent
+        assert "dry" not in sent
+
+    @pytest.mark.asyncio
+    async def test_without_flag_stays_dry(self, hass, mock_config_entry):
+        coordinator, services = self._run_with_schedule(hass, mock_config_entry, {"cool_temperature": 24.0})
+        await coordinator._async_update_data()
+
+        modes = [c for c in services.await_args_list if c.args[1] == "set_hvac_mode"]
+        sent = [c.args[2].get("hvac_mode") for c in modes]
+        assert "dry" in sent
+        assert "cool" not in sent
 
     @pytest.mark.asyncio
     async def test_ac_dries_toward_the_scheduled_target(self, hass, mock_config_entry):
