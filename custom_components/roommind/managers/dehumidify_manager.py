@@ -47,9 +47,14 @@ def supports_dry(state) -> bool:
     used elsewhere for ACs: sending "dry" to a device that never advertised it
     has no sensible fallback, so an unknown capability means "don't".
     """
+    return _supports_mode(state, DEHUMIDIFY_HVAC_MODE)
+
+
+def _supports_mode(state, mode: str) -> bool:
+    """Return True when a climate entity reports *mode* in its hvac_modes."""
     if state is None:
         return False
-    return DEHUMIDIFY_HVAC_MODE in (state.attributes.get("hvac_modes") or [])
+    return mode in (state.attributes.get("hvac_modes") or [])
 
 
 class DehumidifyManager:
@@ -149,40 +154,45 @@ class DehumidifyManager:
         ac_eids: list[str],
         target_temp: float | None = None,
         fan_caps: dict[str, str] | None = None,
+        hvac_mode: str = DEHUMIDIFY_HVAC_MODE,
     ) -> None:
-        """Put every dry-capable AC in *area_id* into dry mode.
+        """Drive every capable AC in *area_id* for dehumidification.
 
-        *target_temp* (°C) is the room's scheduled target, passed through so
-        the AC dries toward the temperature the user actually asked for.  The
-        MPC's proportional setpoint is deliberately not used here: it can be
-        driven down to min_temp to force cooling, which would freeze the room
-        for what is a humidity job.
+        *hvac_mode* is "dry" by default; a schedule slot can ask for "cool"
+        instead (``dehumidify_cool`` overnight), where the AC's thermostat stops
+        at the target instead of Dry's fixed program that overcools.
+
+        *target_temp* (°C) is the room's scheduled target, passed through so the
+        AC dries toward the temperature the user actually asked for.  The MPC's
+        proportional setpoint is deliberately not used here: it can be driven
+        down to min_temp to force cooling, which would freeze the room for what
+        is a humidity job.
 
         *fan_caps* maps entity_id -> a fan-speed label (the effective
-        ``fan_max_mode`` from the schedule/device).  Unlike a true dehumidifier,
-        this AC keeps its fan controllable in dry mode and otherwise runs it on
-        Auto — which blows hard and makes the room feel cold.  Setting the fan
-        to the configured ceiling keeps drying quiet and gentle.  No entry (or
-        no cap configured) leaves the fan on the AC's own dry program.
+        ``fan_max_mode`` from the schedule/device).  This AC keeps its fan
+        controllable and otherwise runs it on Auto — which blows hard and makes
+        the room feel cold.  Setting the fan to the configured ceiling keeps it
+        quiet and gentle.  No entry (or no cap configured) leaves the fan alone.
         """
         fan_caps = fan_caps or {}
         for eid in ac_eids:
             state = self.hass.states.get(eid)
-            if not supports_dry(state):
+            if not _supports_mode(state, hvac_mode):
                 continue
-            if state is None or state.state != DEHUMIDIFY_HVAC_MODE:
+            if state is None or state.state != hvac_mode:
                 try:
                     await self.hass.services.async_call(
                         "climate",
                         "set_hvac_mode",
-                        {"entity_id": eid, "hvac_mode": DEHUMIDIFY_HVAC_MODE},
+                        {"entity_id": eid, "hvac_mode": hvac_mode},
                         blocking=True,
                         context=make_roommind_context(),
                     )
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning(
-                        "Area '%s': climate.set_hvac_mode(dry) failed on '%s'",
+                        "Area '%s': climate.set_hvac_mode(%s) failed on '%s'",
                         area_id,
+                        hvac_mode,
                         eid,
                         exc_info=True,
                     )

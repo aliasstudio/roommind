@@ -18,6 +18,7 @@ from custom_components.roommind.utils.schedule_utils import (
     get_active_schedule_entity,
     make_target_resolver,
     read_schedule_blocks,
+    resolve_schedule_dehumidify_cool,
     resolve_schedule_fan,
     resolve_schedule_idle,
     resolve_schedule_index,
@@ -81,6 +82,40 @@ def test_resolve_schedule_fan_none_blocks():
     assert resolve_schedule_fan(None, _MON_DAY) is None
 
 
+# ---------------------------------------------------------------------------
+# resolve_schedule_dehumidify_cool
+# ---------------------------------------------------------------------------
+
+_COOL_BLOCKS = {
+    "monday": [
+        {"from": "00:00:00", "to": "08:00:00", "data": {"dehumidify_cool": True}},
+        {"from": "08:00:00", "to": "23:59:59", "data": {"temperature": 22}},
+    ]
+}
+
+
+def test_dehumidify_cool_none_blocks():
+    assert resolve_schedule_dehumidify_cool(None, _MON_NIGHT) is False
+
+
+def test_dehumidify_cool_night_true():
+    assert resolve_schedule_dehumidify_cool(_COOL_BLOCKS, _MON_NIGHT) is True
+
+
+def test_dehumidify_cool_day_false():
+    assert resolve_schedule_dehumidify_cool(_COOL_BLOCKS, _MON_DAY) is False
+
+
+def test_dehumidify_cool_string_true():
+    blocks = {"monday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify_cool": "true"}}]}
+    assert resolve_schedule_dehumidify_cool(blocks, _MON_DAY) is True
+
+
+def test_dehumidify_cool_no_active_block():
+    blocks = {"tuesday": [{"from": "00:00:00", "to": "23:59:59", "data": {"dehumidify_cool": True}}]}
+    assert resolve_schedule_dehumidify_cool(blocks, _MON_DAY) is False
+
+
 def test_resolve_schedule_fan_night_cap():
     assert resolve_schedule_fan(_FAN_BLOCKS, _MON_NIGHT) == {"fan_max_mode": "Low"}
 
@@ -104,6 +139,7 @@ def test_resolve_schedule_fan_all_keys():
         "fan_min_mode": "Mute",
         "fan_max_mode": "Low",
     }
+
 
 # ---------------------------------------------------------------------------
 # Helpers

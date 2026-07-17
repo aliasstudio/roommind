@@ -922,7 +922,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
         else:
             # --- Auto fan-speed escalation (per AC device, opt-in) ---
-            from .utils.schedule_utils import resolve_schedule_fan
+            from .utils.schedule_utils import resolve_schedule_dehumidify_cool, resolve_schedule_fan
 
             schedule_fan = resolve_schedule_fan(schedule_blocks, time.time())
             fan_overrides = self._resolve_fan_overrides(
@@ -955,11 +955,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     _cap = (schedule_fan or {}).get("fan_max_mode", _max_label)
                     if _cap:
                         dry_fan_caps[_eid] = _cap
+                # A schedule slot can ask for Cool instead of Dry (e.g. overnight,
+                # where Dry's fixed program overcools); default stays Dry.
+                _dh_mode = "cool" if resolve_schedule_dehumidify_cool(schedule_blocks, time.time()) else "dry"
                 await self._dehumidify_manager.async_apply(
                     area_id,
                     _dh_acs,
                     dry_target,
                     dry_fan_caps or None,
+                    _dh_mode,
                 )
             else:
                 try:
