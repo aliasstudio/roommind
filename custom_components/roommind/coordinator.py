@@ -645,6 +645,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             else None
         )
 
+        # A schedule slot can turn dehumidification off (``dehumidify: false``),
+        # e.g. overnight — hand the room back to normal climate control instead
+        # of running Dry, which overcools.  Cooling then handles humidity only
+        # as a byproduct while it runs; the two never fight for the compressor.
+        if dehumidifying:
+            from .utils.schedule_utils import resolve_schedule_dehumidify_off
+
+            if resolve_schedule_dehumidify_off(schedule_blocks, time.time()):
+                self._dehumidify_manager.remove_room(area_id)
+                dehumidifying = False
+
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
         targets = self._resolve_target_temps(room, settings, schedule_blocks, schedule_entity_id)
@@ -922,7 +933,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
         else:
             # --- Auto fan-speed escalation (per AC device, opt-in) ---
-            from .utils.schedule_utils import resolve_schedule_dehumidify_cool, resolve_schedule_fan
+            from .utils.schedule_utils import resolve_schedule_fan
 
             schedule_fan = resolve_schedule_fan(schedule_blocks, time.time())
             fan_overrides = self._resolve_fan_overrides(
@@ -955,15 +966,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     _cap = (schedule_fan or {}).get("fan_max_mode", _max_label)
                     if _cap:
                         dry_fan_caps[_eid] = _cap
-                # A schedule slot can ask for Cool instead of Dry (e.g. overnight,
-                # where Dry's fixed program overcools); default stays Dry.
-                _dh_mode = "cool" if resolve_schedule_dehumidify_cool(schedule_blocks, time.time()) else "dry"
                 await self._dehumidify_manager.async_apply(
                     area_id,
                     _dh_acs,
                     dry_target,
                     dry_fan_caps or None,
-                    _dh_mode,
                 )
             else:
                 try:

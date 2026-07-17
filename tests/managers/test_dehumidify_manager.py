@@ -194,24 +194,6 @@ async def test_apply_skips_device_already_dry(dm, hass):
     hass.services.async_call.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_apply_uses_cool_mode_when_requested(dm, hass):
-    """A schedule slot can drive dehumidification via Cool instead of Dry."""
-    hass.states.get = MagicMock(return_value=_ac_state(state="off"))
-    await dm.async_apply("bedroom", [AC], hvac_mode="cool")
-    mode_calls = [c for c in hass.services.async_call.await_args_list if c.args[1] == "set_hvac_mode"]
-    assert len(mode_calls) == 1
-    assert mode_calls[0].args[2] == {"entity_id": AC, "hvac_mode": "cool"}
-
-
-@pytest.mark.asyncio
-async def test_apply_cool_skips_device_without_cool(dm, hass):
-    """Cool mode requires the device to report it, just like dry."""
-    hass.states.get = MagicMock(return_value=_ac_state(hvac_modes=("off", "dry", "fan_only")))
-    await dm.async_apply("bedroom", [AC], hvac_mode="cool")
-    hass.services.async_call.assert_not_awaited()
-
-
 # --- target temperature while drying ---
 
 

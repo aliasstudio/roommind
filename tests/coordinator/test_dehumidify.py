@@ -145,8 +145,8 @@ class TestDehumidifyOwnsTheDevice:
         assert state["heating_power"] == 0
 
 
-class TestDehumidifyScheduleCool:
-    """A schedule slot with dehumidify_cool: true dries via Cool, not Dry."""
+class TestDehumidifyScheduleDisable:
+    """A schedule slot with dehumidify: false turns dehumidification off."""
 
     def _run_with_schedule(self, hass, mock_config_entry, block_data):
         store = _make_store_mock({DEHUMIDIFY_ROOM["area_id"]: DEHUMIDIFY_ROOM}, settings=DEHUMIDIFY_SETTINGS)
@@ -167,26 +167,29 @@ class TestDehumidifyScheduleCool:
         return coordinator, hass.services.async_call
 
     @pytest.mark.asyncio
-    async def test_cool_flag_drives_cool_mode(self, hass, mock_config_entry):
+    async def test_slot_disables_dehumidification(self, hass, mock_config_entry):
+        """dehumidify: false → no dry override even with high humidity."""
         coordinator, services = self._run_with_schedule(
-            hass, mock_config_entry, {"cool_temperature": 24.0, "dehumidify_cool": True}
+            hass, mock_config_entry, {"cool_temperature": 24.0, "dehumidify": False}
         )
-        await coordinator._async_update_data()
+        data = await coordinator._async_update_data()
 
-        modes = [c for c in services.await_args_list if c.args[1] == "set_hvac_mode"]
-        sent = [c.args[2].get("hvac_mode") for c in modes]
-        assert "cool" in sent
-        assert "dry" not in sent
+        assert data["rooms"][DEHUMIDIFY_ROOM["area_id"]]["dehumidifying"] is False
+        dry = [
+            c for c in services.await_args_list if c.args[1] == "set_hvac_mode" and c.args[2].get("hvac_mode") == "dry"
+        ]
+        assert dry == []
 
     @pytest.mark.asyncio
-    async def test_without_flag_stays_dry(self, hass, mock_config_entry):
+    async def test_slot_without_flag_still_dries(self, hass, mock_config_entry):
         coordinator, services = self._run_with_schedule(hass, mock_config_entry, {"cool_temperature": 24.0})
-        await coordinator._async_update_data()
+        data = await coordinator._async_update_data()
 
-        modes = [c for c in services.await_args_list if c.args[1] == "set_hvac_mode"]
-        sent = [c.args[2].get("hvac_mode") for c in modes]
-        assert "dry" in sent
-        assert "cool" not in sent
+        assert data["rooms"][DEHUMIDIFY_ROOM["area_id"]]["dehumidifying"] is True
+        dry = [
+            c for c in services.await_args_list if c.args[1] == "set_hvac_mode" and c.args[2].get("hvac_mode") == "dry"
+        ]
+        assert len(dry) == 1
 
     @pytest.mark.asyncio
     async def test_ac_dries_toward_the_scheduled_target(self, hass, mock_config_entry):
