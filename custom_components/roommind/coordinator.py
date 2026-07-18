@@ -309,19 +309,24 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 predicted = self._pending_predictions.pop(area_id, None)
                 # Record the AC's live fan speed (first AC in the room) so the
                 # chosen/auto-escalated speed shows up in analytics over time.
-                # In dry mode the AC locks fan control, but may keep reporting
-                # the last speed — record none, so analytics doesn't show a
-                # speed that isn't actually in effect. Same for a powered-off
-                # unit: many integrations (e.g. TCL) keep the last fan_mode
-                # attribute after hvac_mode goes "off".
+                # A powered-off unit is charted at its minimum speed (the floor
+                # of the line) rather than the stale high speed some
+                # integrations (e.g. TCL) keep reporting after hvac_mode "off" —
+                # keeping the line continuous and honest about airflow.
                 dehumidifying = rs.get("dehumidifying", False)
                 fan_mode = ""
-                if not dehumidifying:
-                    for _ac_eid in get_ac_eids(rooms.get(area_id, {}).get("devices", [])):
-                        _ac_state = self.hass.states.get(_ac_eid)
-                        if _ac_state and _ac_state.state != "off" and _ac_state.attributes.get("fan_mode"):
-                            fan_mode = str(_ac_state.attributes["fan_mode"])
-                            break
+                for _ac_eid in get_ac_eids(rooms.get(area_id, {}).get("devices", [])):
+                    _ac_state = self.hass.states.get(_ac_eid)
+                    if not _ac_state:
+                        continue
+                    if _ac_state.state == "off":
+                        _ladder = order_fan_modes(_ac_state.attributes.get("fan_modes") or [])
+                        fan_mode = _ladder[0] if _ladder else ""
+                        break
+                    _fm = _ac_state.attributes.get("fan_mode")
+                    if _fm:
+                        fan_mode = str(_fm)
+                        break
                 try:
                     await self.hass.async_add_executor_job(
                         self._history_store.record,

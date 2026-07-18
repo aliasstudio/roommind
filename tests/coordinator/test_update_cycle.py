@@ -364,12 +364,13 @@ class TestRoomMindCoordinator:
         assert record_calls[0][0][1] == "living_room_abc12345"
 
     @pytest.mark.asyncio
-    async def test_fan_speed_not_recorded_when_ac_is_off(self, hass, mock_config_entry):
-        """A powered-off AC's stale fan_mode attribute must not reach history.
+    async def test_fan_speed_recorded_as_minimum_when_ac_is_off(self, hass, mock_config_entry):
+        """A powered-off AC charts at its minimum speed, not the stale value.
 
         Some integrations (e.g. TCL) keep reporting the last fan speed after
-        hvac_mode goes "off" — recording it would show a fan speed in
-        analytics for a period where the unit isn't actually running.
+        hvac_mode goes "off". Recording that stale (often high) value would
+        show a fan speed the unit isn't running; instead the line drops to the
+        ladder floor so "off" reads as minimum airflow.
         """
         from custom_components.roommind.const import HISTORY_WRITE_CYCLES
 
@@ -383,7 +384,10 @@ class TestRoomMindCoordinator:
         hass.states.get = MagicMock(
             side_effect=make_mock_states_get(
                 extra={
-                    "climate.living_room_ac": ("off", {"fan_mode": "High", "hvac_modes": ["off", "cool"]}),
+                    "climate.living_room_ac": (
+                        "off",
+                        {"fan_mode": "High", "fan_modes": ["Mute", "Low", "High"], "hvac_modes": ["off", "cool"]},
+                    ),
                 },
             )
         )
@@ -400,7 +404,7 @@ class TestRoomMindCoordinator:
             c for c in hass.async_add_executor_job.call_args_list if len(c[0]) >= 1 and c[0][0] is mock_history.record
         ]
         assert len(record_calls) == 1
-        assert record_calls[0][0][2]["fan_mode"] == ""
+        assert record_calls[0][0][2]["fan_mode"] == "Mute"
 
 
 class TestCoverageGaps:
