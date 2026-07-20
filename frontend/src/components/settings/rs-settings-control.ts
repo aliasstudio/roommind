@@ -73,19 +73,27 @@ export class RsSettingsControl extends RsSettingsBase {
       </div>
 
       <div class="settings-section">
-        <label class="section-label">${localize("settings.fan_full_band", l)}</label>
-        <ha-textfield
-          .value=${String(toDisplayDelta(this.fanFullBand, this.hass))}
-          .suffix=${tempUnit(this.hass)}
-          type="number"
-          step="0.1"
-          min=${String(toDisplayDelta(0.3, this.hass))}
-          max=${String(toDisplayDelta(2.0, this.hass))}
-          @change=${(e: Event) => {
-            const v = parseFloat((e.target as HTMLInputElement).value);
-            if (!isNaN(v)) this._fire("fanFullBand", toCelsiusDelta(v, this.hass));
-          }}
-        ></ha-textfield>
+        <label class="section-label">
+          ${localize("settings.fan_full_band", l)}
+          <span class="section-value"
+            >${toDisplayDelta(this.fanFullBand, this.hass).toFixed(1)}${tempUnit(this.hass)}</span
+          >
+        </label>
+        <div class="slider-row">
+          <span class="slider-label">${localize("settings.fan_full_band_tight", l)}</span>
+          <input
+            type="range"
+            min=${String(toDisplayDelta(0.3, this.hass))}
+            max=${String(toDisplayDelta(2.0, this.hass))}
+            step="0.1"
+            .value=${String(toDisplayDelta(this.fanFullBand, this.hass))}
+            @input=${(e: Event) => {
+              const v = parseFloat((e.target as HTMLInputElement).value);
+              if (!isNaN(v)) this._fire("fanFullBand", toCelsiusDelta(v, this.hass));
+            }}
+          />
+          <span class="slider-label">${localize("settings.fan_full_band_gentle", l)}</span>
+        </div>
         <p class="hint helper-text">${localize("settings.fan_full_band_hint", l)}</p>
       </div>
 
@@ -184,6 +192,11 @@ export class RsSettingsControl extends RsSettingsBase {
         margin-bottom: 8px;
         font-size: 14px;
         color: var(--primary-text-color);
+      }
+      .section-value {
+        float: right;
+        color: var(--secondary-text-color);
+        font-variant-numeric: tabular-nums;
       }
 
       .radio-group {

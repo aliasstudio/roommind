@@ -343,6 +343,8 @@
   "settings.comfort_weight_efficiency": "Efficiency",
   "settings.comfort_weight_hint": "Balances temperature precision against energy use. Comfort reacts earlier and stays closer to target. Efficiency allows more drift to reduce heating/cooling runtime.",
   "settings.fan_full_band": "Fan ramp band",
+  "settings.fan_full_band_tight": "Tighter",
+  "settings.fan_full_band_gentle": "Gentler",
   "settings.fan_full_band_hint": "How far from target the AC fan still runs at its full allowed speed. A smaller value keeps the fan strong closer to target, so the room tracks it more tightly — at the cost of more airflow (draft) as it nears target. A larger value eases the fan off sooner for quieter, gentler operation. Only affects devices set to auto fan control.",
   "settings.weather_entity": "Weather Forecast",
   "settings.weather_entity_hint": "Optional: enables predictive outdoor temperature planning, and acts as a fallback when the outdoor sensor is unavailable",
