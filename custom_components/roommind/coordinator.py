@@ -62,7 +62,7 @@ from .managers.compressor_group_manager import (
 from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.dehumidify_manager import DehumidifyManager
 from .managers.ekf_training_manager import EkfTrainingManager
-from .managers.fan_speed_manager import FanSpeedManager
+from .managers.fan_speed_manager import FAN_FULL_BAND_C, FanSpeedManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
 from .managers.mold_manager import MoldManager
 from .managers.residual_heat_tracker import ResidualHeatTracker
@@ -953,6 +953,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 cycling_eids=cycling_eids,
                 compressor_forced_off=compressor_forced_off,
                 schedule_fan=schedule_fan,
+                full_band=float(settings.get("fan_full_band", FAN_FULL_BAND_C)),
             )
             if dehumidifying:
                 # Dry mode + the scheduled target.  The cool target is
@@ -1155,6 +1156,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         cycling_eids: set[str],
         compressor_forced_off: set[str],
         schedule_fan: dict[str, str] | None = None,
+        full_band: float = FAN_FULL_BAND_C,
     ) -> dict[str, str]:
         """Resolve proportional fan modes for AC devices configured fan_control='auto'.
 
@@ -1215,6 +1217,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 power_fraction=power_fraction,
                 min_idx=min_idx,
                 max_idx=max_idx,
+                full_band=full_band,
             )
 
             # Apply during active conditioning, and in setback idle where the

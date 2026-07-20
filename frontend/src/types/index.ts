@@ -154,6 +154,7 @@ export interface GlobalSettings {
   outdoor_heating_max?: number;
   control_mode?: "mpc" | "bangbang";
   comfort_weight?: number;
+  fan_full_band?: number;
   weather_entity?: string;
   outdoor_unavailable_notify?: boolean;
   climate_control_active?: boolean;

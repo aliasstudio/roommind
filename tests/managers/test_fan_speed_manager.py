@@ -71,6 +71,27 @@ def test_proportional_midpoint():
     assert m.evaluate("ac", LADDER, deficit=0.5, power_fraction=1.0, now=1000) == "Medium"
 
 
+def test_full_band_narrower_ramps_fan_sooner():
+    """A smaller full_band makes the fan reach top speed at a smaller deficit.
+
+    At deficit 0.7 the default 1.0 band gives ~70% up the ladder, while a 0.7
+    band treats it as full demand -> top of the ladder. This is the user-tunable
+    knob for how tightly the fan holds the target.
+    """
+    m1 = FanSpeedManager()
+    default_band = m1.evaluate("ac", LADDER, deficit=0.7, power_fraction=1.0, now=1000)
+    m2 = FanSpeedManager()
+    tight_band = m2.evaluate("ac", LADDER, deficit=0.7, power_fraction=1.0, full_band=0.7, now=1000)
+    assert LADDER.index(tight_band) > LADDER.index(default_band)
+    assert tight_band == "Strong"
+
+
+def test_full_band_zero_falls_back_to_min():
+    """A non-positive band means no error signal -> minimum fan (no divide-by-zero)."""
+    m = FanSpeedManager()
+    assert m.evaluate("ac", LADDER, deficit=2.0, power_fraction=1.0, full_band=0.0, now=1000) == "Mute"
+
+
 def test_power_fraction_caps_speed():
     m = FanSpeedManager()
     # large error but the model only wants 1/3 power -> fan held to ~1/3 ladder
