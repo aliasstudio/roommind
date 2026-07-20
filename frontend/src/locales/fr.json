@@ -342,6 +342,8 @@
   "settings.comfort_weight_comfort": "Confort",
   "settings.comfort_weight_efficiency": "Efficacité",
   "settings.comfort_weight_hint": "Équilibre la précision de la température avec la consommation d'énergie. Le confort réagit plus tôt et reste plus proche de la cible. L'efficacité permet plus de dérive pour réduire la durée de chauffage/refroidissement.",
+  "settings.fan_full_band": "Plage de montée du ventilateur",
+  "settings.fan_full_band_hint": "À quelle distance de la cible le ventilateur de la clim tourne encore à sa vitesse maximale autorisée. Une valeur plus faible garde le ventilateur fort plus près de la cible, donc la pièce la suit de plus près — au prix de plus de flux d'air (courant d'air) à l'approche. Une valeur plus élevée réduit le ventilateur plus tôt, pour un fonctionnement plus silencieux et doux. N'affecte que les appareils en contrôle de ventilateur automatique.",
   "settings.weather_entity": "Prévision météo",
   "settings.weather_entity_hint": "Optionnel : active la planification prédictive de la température extérieure et sert de secours lorsque le capteur extérieur est indisponible",
   "settings.outdoor_unavailable_notify": "Notifier lorsque la température extérieure est indisponible",

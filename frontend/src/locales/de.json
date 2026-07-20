@@ -342,6 +342,8 @@
   "settings.comfort_weight_comfort": "Komfort",
   "settings.comfort_weight_efficiency": "Effizienz",
   "settings.comfort_weight_hint": "Gewichtet Temperaturgenauigkeit gegen Energieverbrauch. Komfort reagiert früher und bleibt näher am Zielwert. Effizienz erlaubt mehr Abweichung, um Heiz- und Kühllaufzeiten zu reduzieren.",
+  "settings.fan_full_band": "Lüfter-Rampenband",
+  "settings.fan_full_band_hint": "Wie weit vom Zielwert entfernt der Klimalüfter noch mit voller erlaubter Drehzahl läuft. Ein kleinerer Wert hält den Lüfter näher am Zielwert stark, sodass der Raum enger geregelt wird — auf Kosten von mehr Luftzug beim Annähern an den Zielwert. Ein größerer Wert nimmt den Lüfter früher zurück, für leiseren, sanfteren Betrieb. Betrifft nur Geräte mit automatischer Lüftersteuerung.",
   "settings.weather_entity": "Wettervorhersage",
   "settings.weather_entity_hint": "Optional: ermöglicht vorausschauende Außentemperaturplanung und dient als Fallback wenn der Außensensor nicht verfügbar ist",
   "settings.outdoor_unavailable_notify": "Hinweis bei fehlender Außentemperatur",

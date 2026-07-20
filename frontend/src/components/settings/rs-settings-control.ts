@@ -7,7 +7,15 @@ import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant } from "../../types";
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
-import { toDisplay, toCelsius, tempUnit, tempStep, tempRange } from "../../utils/temperature";
+import {
+  toDisplay,
+  toCelsius,
+  toDisplayDelta,
+  toCelsiusDelta,
+  tempUnit,
+  tempStep,
+  tempRange,
+} from "../../utils/temperature";
 
 const CONTROL_DOCS_URL =
   "https://github.com/snazzybean/roommind/blob/main/docs/control-and-devices.md";
@@ -17,6 +25,7 @@ export class RsSettingsControl extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
   @property({ type: Number }) public comfortWeight = 70;
+  @property({ type: Number }) public fanFullBand = 1.0;
   @property({ type: Number }) public outdoorCoolingMin = 16;
   @property({ type: Number }) public outdoorHeatingMax = 22;
   @property({ type: Boolean }) public predictionEnabled = true;
@@ -61,6 +70,23 @@ export class RsSettingsControl extends RsSettingsBase {
         <a class="helper-link" href=${CONTROL_DOCS_URL} target="_blank" rel="noreferrer">
           ${localize("common.learn_more", l)}
         </a>
+      </div>
+
+      <div class="settings-section">
+        <label class="section-label">${localize("settings.fan_full_band", l)}</label>
+        <ha-textfield
+          .value=${String(toDisplayDelta(this.fanFullBand, this.hass))}
+          .suffix=${tempUnit(this.hass)}
+          type="number"
+          step="0.1"
+          min=${String(toDisplayDelta(0.3, this.hass))}
+          max=${String(toDisplayDelta(2.0, this.hass))}
+          @change=${(e: Event) => {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(v)) this._fire("fanFullBand", toCelsiusDelta(v, this.hass));
+          }}
+        ></ha-textfield>
+        <p class="hint helper-text">${localize("settings.fan_full_band_hint", l)}</p>
       </div>
 
       <div class="settings-section">

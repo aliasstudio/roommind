@@ -42,6 +42,7 @@ export class RsSettings extends LitElement {
   @state() private _outdoorHeatingMax = 22;
   @state() private _controlMode: "mpc" | "bangbang" = "mpc";
   @state() private _comfortWeight = 70;
+  @state() private _fanFullBand = 1.0;
   @state() private _weatherEntity = "";
   @state() private _outdoorUnavailableNotify = true;
   @state() private _predictionEnabled = true;
@@ -98,6 +99,7 @@ export class RsSettings extends LitElement {
       this._outdoorHeatingMax = s.outdoor_heating_max ?? 22;
       this._controlMode = s.control_mode ?? "mpc";
       this._comfortWeight = s.comfort_weight ?? 70;
+      this._fanFullBand = s.fan_full_band ?? 1.0;
       this._weatherEntity = s.weather_entity ?? "";
       this._outdoorUnavailableNotify = s.outdoor_unavailable_notify ?? true;
       this._predictionEnabled = s.prediction_enabled ?? true;
@@ -183,6 +185,7 @@ export class RsSettings extends LitElement {
           .hass=${this.hass}
           .controlMode=${this._controlMode}
           .comfortWeight=${this._comfortWeight}
+          .fanFullBand=${this._fanFullBand}
           .outdoorCoolingMin=${this._outdoorCoolingMin}
           .outdoorHeatingMax=${this._outdoorHeatingMax}
           .predictionEnabled=${this._predictionEnabled}
@@ -348,6 +351,7 @@ export class RsSettings extends LitElement {
         outdoor_heating_max: this._outdoorHeatingMax,
         control_mode: this._controlMode,
         comfort_weight: this._comfortWeight,
+        fan_full_band: this._fanFullBand,
         weather_entity: this._weatherEntity,
         outdoor_unavailable_notify: this._outdoorUnavailableNotify,
         prediction_enabled: this._predictionEnabled,

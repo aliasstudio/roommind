@@ -52,6 +52,7 @@ class FanSpeedManager:
         power_fraction: float = 1.0,
         min_idx: int = 0,
         max_idx: int | None = None,
+        full_band: float = FAN_FULL_BAND_C,
         now: float | None = None,
     ) -> str | None:
         """Pick the proportional fan mode for this cycle.
@@ -68,6 +69,10 @@ class FanSpeedManager:
                 error is larger. Bang-bang fallback passes 1.0, so the error
                 term governs until the model is confident.
             min_idx / max_idx: inclusive ladder bounds.
+            full_band: the deficit (°C) at which the fan reaches full (capped)
+                speed. Smaller values hold the fan strong closer to target
+                (tighter tracking, more airflow near target); larger values ease
+                it off sooner (quieter). User-tunable per install.
             now: injectable clock for testing.
 
         Returns:
@@ -81,7 +86,7 @@ class FanSpeedManager:
 
         # Demand fraction: how far above target (clamped 0..1), capped by the
         # MPC power demand so the model can hold the fan down near target.
-        err_frac = max(0.0, min(1.0, deficit / FAN_FULL_BAND_C)) if FAN_FULL_BAND_C > 0 else 0.0
+        err_frac = max(0.0, min(1.0, deficit / full_band)) if full_band > 0 else 0.0
         frac = min(err_frac, max(0.0, min(1.0, power_fraction)))
         target_level = lo + round(frac * (hi - lo))
         target_level = max(lo, min(hi, target_level))
