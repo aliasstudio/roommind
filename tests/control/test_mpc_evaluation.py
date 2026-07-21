@@ -1097,3 +1097,83 @@ def test_start_deadband_scales_with_comfort_weight():
     assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 70})._start_deadband == pytest.approx(0.15)
     assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 40})._start_deadband == pytest.approx(0.493, abs=0.01)
     assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 0})._start_deadband == pytest.approx(0.95)
+
+
+# ---------------------------------------------------------------------------
+# Absent-target filling — a cool_only override must survive the optimizer's
+# "cool >= heat" clamp (regression: overrides were silently discarded)
+# ---------------------------------------------------------------------------
+
+
+def test_fill_missing_heat_stays_below_a_real_cool_target():
+    """A cool_only room's absent heat target must not drag the cool target up.
+
+    The optimizer clamps cool >= heat, so filling heat with the room
+    temperature would raise a "cool to 20" request to whatever the room
+    currently reads — silently discarding the override.
+    """
+    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
+
+    heat, cool = _fill_missing_targets(None, 20.0, current_temp=24.4)
+    assert cool == 20.0
+    assert heat <= cool
+    assert max(heat, cool) == 20.0  # what the optimizer's clamp will produce
+
+
+def test_fill_missing_cool_stays_above_a_real_heat_target():
+    """Symmetric case: a heat_only room's absent cool target."""
+    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
+
+    heat, cool = _fill_missing_targets(21.0, None, current_temp=18.0)
+    assert heat == 21.0
+    assert cool >= heat
+
+
+def test_fill_both_absent_falls_back_to_current_temp():
+    """Both sides off -> zero deviation, so idle stays optimal."""
+    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
+
+    assert _fill_missing_targets(None, None, current_temp=22.5) == (22.5, 22.5)
+
+
+def test_fill_leaves_real_targets_untouched():
+    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
+
+    assert _fill_missing_targets(18.0, 24.0, current_temp=21.0) == (18.0, 24.0)
+
+
+def test_cool_only_override_reaches_the_optimizer(monkeypatch):
+    """End-to-end: a cool_only override of 20 °C must arrive as a 20 °C cool
+    target, not as the current room temperature."""
+    from custom_components.roommind.control import mpc_optimizer as optimizer_module
+
+    hass = build_hass()
+    room = make_room(acs=["climate.ac1"], thermostats=[], climate_mode="cool_only")
+    mgr = RoomModelManager()
+    mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0))
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=29.0,
+        settings={"comfort_weight": 40},
+        has_external_sensor=True,
+        previous_mode=MODE_IDLE,
+        off_since=time.time() - 40 * 60,
+        target_resolver=lambda ts: TargetTemps(heat=None, cool=20.0),
+    )
+
+    seen: dict[str, list[float]] = {}
+    original = optimizer_module.MPCOptimizer.optimize
+
+    def capture(self, *args, **kwargs):
+        # after the optimizer's own cool >= heat clamp
+        heat = kwargs["heat_target_series"]
+        cool = kwargs["cool_target_series"]
+        seen["effective_cool"] = [max(h, c) for h, c in zip(heat, cool, strict=False)]
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(optimizer_module.MPCOptimizer, "optimize", capture)
+    ctrl._evaluate_mpc(24.4, TargetTemps(heat=None, cool=20.0))
+
+    assert seen["effective_cool"][0] == 20.0, "the override was discarded by the clamp"
