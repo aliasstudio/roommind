@@ -630,6 +630,27 @@ SAFETY_GUARD_MIN_BLOCKS = 6  # Minimum guard horizon (30 min floor)
 GUARD_PREDICTION_MARGIN = 0.2  # °C margin for prediction-based guard bypass
 HARD_OVERSHOOT_CEILING = 1.0  # °C — model-independent max overshoot before forced idle
 
+
+def _fill_missing_targets(heat: float | None, cool: float | None, current_temp: float) -> tuple[float, float]:
+    """Substitute an absent target without crossing the one that is set.
+
+    ``None`` on a side means "no demand there" — a cool_only room has no heating
+    target, and an override on such a room stores ``heat=None``.  Substituting
+    the current temperature keeps the optimizer's deviation at zero, so idle
+    stays optimal on that side.  But the optimizer clamps ``cool >= heat``, so a
+    substituted heat sitting above a *real* cool target would silently drag that
+    target up to the room temperature and discard the request — a cool_only room
+    under a "cool to 20" override would be told to hold whatever it currently
+    reads.  Keep the filler on its own side of the real target.
+    """
+    if heat is None and cool is None:
+        return current_temp, current_temp
+    if heat is None:
+        return min(current_temp, cast(float, cool)), cast(float, cool)
+    if cool is None:
+        return heat, max(current_temp, heat)
+    return heat, cool
+
 # Minimum sample counts before MPC is allowed.
 # Each EKF update covers ~3 min (EKF_UPDATE_MIN_DT), so these correspond
 # to real-time requirements of ~3 h idle + ~1 h active-mode data.
@@ -939,16 +960,16 @@ class MPCController:
             # Extract separate heat and cool series from TargetTemps
             if raw_targets and isinstance(raw_targets[0], TargetTemps):
                 tt_targets = cast(list[TargetTemps], raw_targets)
-                heat_target_series = [t.heat if t.heat is not None else current_temp for t in tt_targets]
-                cool_target_series = [t.cool if t.cool is not None else current_temp for t in tt_targets]
+                filled = [_fill_missing_targets(t.heat, t.cool, current_temp) for t in tt_targets]
+                heat_target_series = [h for h, _ in filled]
+                cool_target_series = [c for _, c in filled]
             else:
                 # Legacy resolver returning float|None
                 float_targets = cast(list[float | None], raw_targets)
                 heat_target_series = [t if t is not None else current_temp for t in float_targets]
                 cool_target_series = list(heat_target_series)
         else:
-            fallback_h = targets.heat if targets.heat is not None else current_temp
-            fallback_c = targets.cool if targets.cool is not None else current_temp
+            fallback_h, fallback_c = _fill_missing_targets(targets.heat, targets.cool, current_temp)
             heat_target_series = [fallback_h] * horizon_blocks
             cool_target_series = [fallback_c] * horizon_blocks
 
