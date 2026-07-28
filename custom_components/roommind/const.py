@@ -21,8 +21,12 @@ CLIMATE_MODES = [CLIMATE_MODE_AUTO, CLIMATE_MODE_HEAT_ONLY, CLIMATE_MODE_COOL_ON
 # Override types
 OVERRIDE_BOOST = "boost"
 OVERRIDE_ECO = "eco"
+OVERRIDE_TURBO = "turbo"
 OVERRIDE_CUSTOM = "custom"
-OVERRIDE_TYPES = [OVERRIDE_BOOST, OVERRIDE_ECO, OVERRIDE_CUSTOM]
+OVERRIDE_TYPES = [OVERRIDE_BOOST, OVERRIDE_ECO, OVERRIDE_TURBO, OVERRIDE_CUSTOM]
+
+# Cooling target stored for a turbo override when no AC reports a min_temp.
+DEFAULT_TURBO_COOL = 16.0
 
 # Room modes
 MODE_IDLE = "idle"
@@ -204,6 +208,16 @@ def is_override_active(room: dict) -> bool:
         return False
     override_until = room.get("override_until")
     return override_until is None or time.time() < override_until
+
+
+def is_turbo_active(room: dict) -> bool:
+    """Return True when a turbo override is currently running.
+
+    Turbo is a manual "cool flat out" request: maximum fan, minimum setpoint,
+    schedule/presence/dehumidify intent ignored, and the thermal model is not
+    trained from it (the AC is deliberately off its normal operating point).
+    """
+    return room.get("override_type") == OVERRIDE_TURBO and is_override_active(room)
 
 
 def is_override_suppressed(room: dict, settings: dict, presence_away: bool) -> bool:

@@ -4,6 +4,7 @@ import type { HomeAssistant, RoomConfig, ClimateMode, OverrideType } from "../ty
 import { localize } from "../utils/localize";
 import { inputStyles } from "../styles/input-styles";
 import { tempUnit, toDisplay, toCelsius, tempStep, tempRange } from "../utils/temperature";
+import { OVERRIDE_ICONS, OVERRIDE_LABEL_KEYS, OVERRIDE_TYPES } from "../utils/override";
 
 @customElement("rs-override-section")
 export class RsOverrideSection extends LitElement {
@@ -89,6 +90,12 @@ export class RsOverrideSection extends LitElement {
         border-color: #4caf50;
         background: rgba(76, 175, 80, 0.15);
         color: #4caf50;
+      }
+
+      .override-preset.active.turbo {
+        border-color: #00bcd4;
+        background: rgba(0, 188, 212, 0.15);
+        color: #00bcd4;
       }
 
       .override-preset.active.custom {
@@ -232,28 +239,26 @@ export class RsOverrideSection extends LitElement {
 
     return html`
       <div class="override-presets">
-        ${(["boost", "eco", "custom"] as OverrideType[]).map((t) => {
-          const isActive = activeType === t;
-          const isDisabled = activeType !== null && !isActive;
-          const isPending = !activeType && this._overridePending === t;
+        ${OVERRIDE_TYPES.filter((t) => t !== "turbo" || this.climateMode !== "heat_only").map(
+          (t) => {
+            const isActive = activeType === t;
+            const isDisabled = activeType !== null && !isActive;
+            const isPending = !activeType && this._overridePending === t;
 
-          return html`
-            <button
-              class="override-preset ${t} ${isActive ? "active" : ""} ${isPending ? "pending" : ""}"
-              ?disabled=${isDisabled}
-              @click=${() => (isActive ? this._onClearOverride() : this._onOverridePreset(t))}
-            >
-              <ha-icon
-                icon=${t === "boost" ? "mdi:fire" : t === "eco" ? "mdi:leaf" : "mdi:thermometer"}
-              ></ha-icon>
-              ${t === "boost"
-                ? localize("override.comfort", this.language)
-                : t === "eco"
-                  ? localize("override.eco", this.language)
-                  : localize("override.custom", this.language)}
-            </button>
-          `;
-        })}
+            return html`
+              <button
+                class="override-preset ${t} ${isActive ? "active" : ""} ${isPending
+                  ? "pending"
+                  : ""}"
+                ?disabled=${isDisabled}
+                @click=${() => (isActive ? this._onClearOverride() : this._onOverridePreset(t))}
+              >
+                <ha-icon icon=${OVERRIDE_ICONS[t]}></ha-icon>
+                ${localize(OVERRIDE_LABEL_KEYS[t], this.language)}
+              </button>
+            `;
+          },
+        )}
       </div>
       ${showDuration
         ? html`
@@ -362,12 +367,18 @@ export class RsOverrideSection extends LitElement {
     } else if (pendingType === "eco") {
       heat = this.ecoHeat;
       cool = this.ecoCool;
+    } else if (pendingType === "turbo") {
+      // The backend resolves the coldest setpoint the room's ACs accept.
+      heat = null;
+      cool = null;
     } else {
       heat = this._overrideCustomHeat;
       cool = this._overrideCustomCool;
     }
-    if (this.climateMode === "heat_only") cool = null;
-    if (this.climateMode === "cool_only") heat = null;
+    if (pendingType !== "turbo") {
+      if (this.climateMode === "heat_only") cool = null;
+      if (this.climateMode === "cool_only") heat = null;
+    }
 
     if (heat != null && cool != null && cool < heat) {
       this._overrideError = localize("override.invalid_band", this.language);

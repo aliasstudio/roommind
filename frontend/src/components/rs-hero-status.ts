@@ -5,6 +5,7 @@ import { getModeClass, formatMode } from "../utils/room-state";
 import { modeStyles } from "../styles/shared-mode-styles";
 import { localize } from "../utils/localize";
 import { formatTemp, tempUnit, toDisplayDelta } from "../utils/temperature";
+import { OVERRIDE_ICONS, OVERRIDE_LABEL_KEYS } from "../utils/override";
 import "./shared/rs-info-icon";
 
 const PENCIL_PATH =
@@ -127,6 +128,10 @@ export class RsHeroStatus extends LitElement {
 
       .hero-target-label.override-eco {
         color: #4caf50;
+      }
+
+      .hero-target-label.override-turbo {
+        color: #00bcd4;
       }
 
       .hero-target-label.override-custom {
@@ -364,15 +369,10 @@ export class RsHeroStatus extends LitElement {
     const ov = this._getEffectiveOverride();
 
     if (ov) {
-      const icon =
-        ov.type === "boost" ? "mdi:fire" : ov.type === "eco" ? "mdi:leaf" : "mdi:thermometer";
-      const label =
-        ov.type === "boost"
-          ? localize("override.comfort", l)
-          : ov.type === "eco"
-            ? localize("override.eco", l)
-            : localize("override.custom", l);
-      const colorClass = `override-${ov.type}`;
+      const type = ov.type ?? "custom";
+      const icon = OVERRIDE_ICONS[type];
+      const label = localize(OVERRIDE_LABEL_KEYS[type], l);
+      const colorClass = `override-${type}`;
       const ovHeat = ov.heat;
       const ovCool = ov.cool;
       const showOvRange = ovHeat != null && ovCool != null && ovHeat !== ovCool;

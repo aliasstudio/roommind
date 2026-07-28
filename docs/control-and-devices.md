@@ -163,6 +163,20 @@ Example — silent night, lively day:
     fan_max_mode: "Strong"  # full power available by day
 ```
 
+## Turbo Override
+
+`Turbo` is a room override next to `Comfort`, `Eco` and `Custom`, with the same duration chips. While it runs, the room cools flat out:
+
+- the ACs are set to the coldest setpoint they accept and to the strongest fan speed on their ladder
+- schedule targets, presence, vacation and the `fan_max_mode` caps above are all ignored
+- active dehumidification hands the AC back, since Dry mode owns the unit while it runs
+
+Two guards still apply: an open window (or a disabled climate control) idles the room as usual, and compressor group limits are respected.
+
+Turbo observations are excluded from thermal-model training — the AC is deliberately held off its normal operating point, so those cycles say nothing about how the room behaves under regular control. Analytics history keeps recording, so the charts stay continuous.
+
+Turbo is hidden in `heat_only` rooms.
+
 ## Smart Source Selection
 
 `Smart source selection` only appears when a room has:
