@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.roommind.const import DOMAIN
+from custom_components.roommind.const import DEFAULT_TURBO_COOL, DOMAIN
 from custom_components.roommind.websocket_api import (
     _csv_to_points,
     _safe_float,
@@ -625,6 +625,79 @@ async def test_override_set_eco(ws_hass, store, connection):
     assert room["override_heat"] == 16.0
     assert room["override_cool"] == 27.0
     assert room["override_type"] == "eco"
+
+
+@pytest.mark.asyncio
+async def test_override_set_turbo_uses_coldest_ac_setpoint(ws_hass, store, connection):
+    """Turbo stores a cooling-only override at the strictest AC min_temp."""
+    await store.async_load()
+
+    ac_states = {
+        "climate.ac1": MagicMock(attributes={"min_temp": 16.0}),
+        "climate.ac2": MagicMock(attributes={"min_temp": 18.0}),
+    }
+    ws_hass.states.get = MagicMock(side_effect=ac_states.get)
+
+    await _save_room(
+        ws_hass,
+        connection,
+        {
+            "id": 2,
+            "type": "roommind/rooms/save",
+            "area_id": "bed",
+            "climate_mode": "heat_only",
+            "devices": [
+                {"entity_id": "climate.ac1", "type": "ac"},
+                {"entity_id": "climate.ac2", "type": "ac"},
+            ],
+        },
+    )
+    connection.send_result.reset_mock()
+
+    await _override_set(
+        ws_hass,
+        connection,
+        {
+            "id": 3,
+            "type": "roommind/override/set",
+            "area_id": "bed",
+            "override_type": "turbo",
+            "duration": 1.0,
+        },
+    )
+
+    connection.send_result.assert_called_once_with(3, {"success": True})
+    room = store.get_room("bed")
+    assert room["override_type"] == "turbo"
+    assert room["override_heat"] is None
+    # Strictest limit wins, and climate_mode="heat_only" does not clear it.
+    assert room["override_cool"] == 18.0
+
+
+@pytest.mark.asyncio
+async def test_override_set_turbo_without_acs_falls_back(ws_hass, store, connection):
+    """Turbo in a room with no ACs stores the default cooling target."""
+    await store.async_load()
+
+    await _save_room(
+        ws_hass,
+        connection,
+        {"id": 2, "type": "roommind/rooms/save", "area_id": "hall"},
+    )
+    connection.send_result.reset_mock()
+
+    await _override_set(
+        ws_hass,
+        connection,
+        {
+            "id": 3,
+            "type": "roommind/override/set",
+            "area_id": "hall",
+            "override_type": "turbo",
+        },
+    )
+
+    assert store.get_room("hall")["override_cool"] == DEFAULT_TURBO_COOL
 
 
 @pytest.mark.asyncio

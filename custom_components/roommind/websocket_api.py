@@ -20,6 +20,7 @@ from .const import (
     DEFAULT_CONFLICT_RESOLUTION,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_TURBO_COOL,
     DOMAIN,
     OVERRIDE_TYPES,
     build_override_live,
@@ -51,6 +52,24 @@ if TYPE_CHECKING:
     from homeassistant.components.websocket_api import ActiveConnection
 
     from .coordinator import RoomMindCoordinator
+
+
+def _turbo_cool_target(hass: HomeAssistant, room: dict) -> float:
+    """Return the coldest setpoint every AC in the room accepts.
+
+    The strictest ``min_temp`` wins so the stored target is reachable on all
+    units; the coordinator additionally floors the sent setpoint at each
+    device's own limit.
+    """
+    from .utils.device_utils import get_ac_eids
+    from .utils.temp_utils import ha_temp_to_celsius
+
+    mins = [
+        ha_temp_to_celsius(hass, state.attributes["min_temp"])
+        for eid in get_ac_eids(room.get("devices", []))
+        if (state := hass.states.get(eid)) and state.attributes.get("min_temp") is not None
+    ]
+    return max(mins) if mins else DEFAULT_TURBO_COOL
 
 
 def _get_coordinator(hass: HomeAssistant) -> RoomMindCoordinator | None:
@@ -497,6 +516,11 @@ async def websocket_override_set(
     elif override_type == "eco":
         heat = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))
         cool = room.get("eco_cool", DEFAULT_ECO_COOL)
+    elif override_type == "turbo":
+        # Cool flat out: aim at the coldest setpoint the ACs accept. climate_mode
+        # is deliberately not applied — turbo is always a cooling request.
+        heat = None
+        cool = _turbo_cool_target(hass, room)
     else:  # custom
         heat = msg.get("heat")
         cool = msg.get("cool")
@@ -504,10 +528,11 @@ async def websocket_override_set(
             connection.send_error(msg["id"], "invalid", "Custom override requires heat and/or cool")
             return
 
-    if climate_mode == "heat_only":
-        cool = None
-    elif climate_mode == "cool_only":
-        heat = None
+    if override_type != "turbo":
+        if climate_mode == "heat_only":
+            cool = None
+        elif climate_mode == "cool_only":
+            heat = None
 
     if heat is not None and cool is not None and cool < heat:
         connection.send_error(msg["id"], "invalid", "Cooling target must be >= heating target")

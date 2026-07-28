@@ -42,6 +42,7 @@ from .const import (
     build_override_live,
     is_override_active,
     is_override_suppressed,
+    is_turbo_active,
     make_roommind_context,
 )
 from .control.mpc_controller import (
@@ -636,6 +637,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             get_ac_eids(room.get("devices", [])),
         ).active
 
+        # Turbo override: the user asked for flat-out cooling, so Dry mode (which
+        # owns the AC while it runs) must hand the unit back.
+        turbo = is_turbo_active(room)
+        if turbo and dehumidifying:
+            self._dehumidify_manager.remove_room(area_id)
+            dehumidifying = False
+
         # Load schedule blocks once — used for both target temp resolution and MPC lookahead.
         from .utils.schedule_utils import (
             get_active_schedule_entity,
@@ -793,6 +801,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if dehumidifying:
             mode = MODE_IDLE
             power_fraction = 0.0
+
+        # Turbo override: cool flat out, whatever the schedule, presence or the
+        # model wanted. An open window stays a hard stop — that guard exists to
+        # keep the AC from cooling the street.
+        if turbo and not window_open:
+            mode = MODE_COOLING
+            power_fraction = 1.0
+            force_off = False
 
         climate_active = settings.get("climate_control_active", True) and room.get("climate_control_enabled", True)
         # Startup guard: Full Control room without any temperature reading yet —
@@ -954,6 +970,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 compressor_forced_off=compressor_forced_off,
                 schedule_fan=schedule_fan,
                 full_band=float(settings.get("fan_full_band", FAN_FULL_BAND_C)),
+                turbo=turbo,
             )
             if dehumidifying:
                 # Dry mode + the scheduled target.  The cool target is
@@ -1157,6 +1174,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         compressor_forced_off: set[str],
         schedule_fan: dict[str, str] | None = None,
         full_band: float = FAN_FULL_BAND_C,
+        turbo: bool = False,
     ) -> dict[str, str]:
         """Resolve proportional fan modes for AC devices configured fan_control='auto'.
 
@@ -1171,6 +1189,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         A *schedule_fan* override (from the active schedule block) takes
         precedence over the per-device fan config, letting a slot cap the speed
         by time of day (e.g. ``fan_max_mode: Low`` overnight for quiet cooling).
+
+        Under *turbo* every AC runs at the top of its ladder instead, ignoring
+        both the per-device fan config and any schedule cap.
         """
         overrides: dict[str, str] = {}
         devices = room.get("devices", [])
@@ -1193,6 +1214,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 deficit = targets.heat - current_temp
 
         for eid in ac_eids:
+            if turbo:
+                turbo_state = self.hass.states.get(eid)
+                turbo_ladder = order_fan_modes((turbo_state.attributes.get("fan_modes") or []) if turbo_state else [])
+                if turbo_ladder and controllable and mode == MODE_COOLING and eid not in compressor_forced_off:
+                    # Drop the ramp state so the fan re-converges once turbo ends.
+                    self._fan_speed_manager.reset(eid)
+                    overrides[eid] = turbo_ladder[-1]
+                continue
             fan_control, min_label, max_label = get_fan_control(devices, eid)
             # Schedule overrides win over the per-device fan config.
             fan_control = sched.get("fan_control", fan_control)
@@ -1428,8 +1457,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # toward 0, alpha drifts under process noise and eventually pegs at
         # the upper bound (see #301).  Skip the update — and flush any
         # accumulated batch — when no real outdoor source is available.
+        #
+        # Turbo is excluded for the same reason: the user has pinned the AC to
+        # maximum fan and minimum setpoint, so the observation says nothing about
+        # how the room behaves under normal control.
         learning_disabled = settings.get("learning_disabled_rooms", [])
-        learning_active = area_id not in learning_disabled
+        learning_active = area_id not in learning_disabled and not is_turbo_active(room)
         if learning_active and current_temp_raw is not None and self.outdoor_temp_effective is not None:
             can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=check_acs_can_heat(self.hass, room))
             self._ekf_training.process(

@@ -202,6 +202,58 @@ def test_cooling_fan_efficiency_averages_multiple_acs():
     assert RoomMindCoordinator._cooling_fan_efficiency(fake, room) == 0.75
 
 
+def test_resolve_turbo_runs_top_of_ladder_ignoring_caps():
+    """Turbo pins every AC to its strongest speed, past config and schedule caps."""
+    fake = _fake_coordinator(LADDER_LABELS)
+    room = {
+        "devices": [
+            {
+                "entity_id": "climate.ac1",
+                "type": "ac",
+                "fan_control": "fixed",
+                "fan_max_mode": "Low",
+            }
+        ]
+    }
+    out = _resolve(
+        fake,
+        room=room,
+        mode="cooling",
+        current_temp=23.0,
+        targets=TargetTemps(heat=None, cool=16.0),
+        power_fraction=1.0,
+        climate_active=True,
+        window_open=False,
+        force_off=False,
+        cycling_eids=set(),
+        compressor_forced_off=set(),
+        schedule_fan={"fan_max_mode": "Mute"},
+        turbo=True,
+    )
+    assert out == {"climate.ac1": "Strong"}
+
+
+def test_resolve_turbo_skips_blocked_compressor():
+    """A compressor-blocked AC gets no turbo fan command."""
+    fake = _fake_coordinator(LADDER_LABELS)
+    room = {"devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}]}
+    out = _resolve(
+        fake,
+        room=room,
+        mode="cooling",
+        current_temp=23.0,
+        targets=TargetTemps(heat=None, cool=16.0),
+        power_fraction=1.0,
+        climate_active=True,
+        window_open=False,
+        force_off=False,
+        cycling_eids=set(),
+        compressor_forced_off={"climate.ac1"},
+        turbo=True,
+    )
+    assert out == {}
+
+
 def test_resolve_proportional_in_cooling():
     fake = _fake_coordinator(LADDER_LABELS)
     room = {

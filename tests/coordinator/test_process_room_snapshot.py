@@ -339,3 +339,64 @@ class TestProcessRoomSnapshot:
         assert result["target_temp"] is not None
         # Managed mode should still return all normal keys
         assert set(result.keys()) == NORMAL_ROOM_KEYS
+
+    @pytest.mark.asyncio
+    async def test_turbo_override_cools_flat_out(self, hass, mock_config_entry):
+        """Turbo forces cooling at full power and keeps the EKF untrained."""
+        import time
+
+        room = {
+            **SAMPLE_ROOM,
+            "thermostats": [],
+            "acs": ["climate.ac1"],
+            "devices": [{"entity_id": "climate.ac1", "type": "ac", "fan_control": "auto"}],
+            "climate_mode": "cool_only",
+            "override_type": "turbo",
+            "override_heat": None,
+            "override_cool": 16.0,
+            "override_until": time.time() + 3600,
+        }
+        coordinator, store = _setup_coordinator(
+            hass,
+            mock_config_entry,
+            {"living_room_abc12345": room},
+        )
+        hass.states.get = MagicMock(
+            side_effect=make_mock_states_get(
+                temp="21.0",
+                humidity="55.0",
+                # Schedule off — turbo must ignore it.
+                schedule_state="off",
+                extra={
+                    "climate.ac1": (
+                        "cool",
+                        {
+                            "current_temperature": 21.0,
+                            "temperature": 24.0,
+                            "hvac_modes": ["off", "cool"],
+                            "fan_modes": ["Auto", "Mute", "Low", "High", "Strong"],
+                            "fan_mode": "Low",
+                            "max_temp": 30,
+                            "min_temp": 16,
+                        },
+                    ),
+                },
+            ),
+        )
+        coordinator._ekf_training.process = MagicMock()
+
+        settings = store.get_settings()
+        result = await coordinator._async_process_room(room, settings, [])
+
+        assert result["mode"] == "cooling"
+        assert result["override_type"] == "turbo"
+        assert result["force_off"] is False
+        coordinator._ekf_training.process.assert_not_called()
+
+        # The AC is driven to its coldest setpoint at the strongest fan speed.
+        calls = {
+            (call.args[1], call.args[2].get("entity_id")): call.args[2]
+            for call in hass.services.async_call.call_args_list
+        }
+        assert calls[("set_temperature", "climate.ac1")]["temperature"] == 16.0
+        assert calls[("set_fan_mode", "climate.ac1")]["fan_mode"] == "Strong"
