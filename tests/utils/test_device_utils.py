@@ -13,6 +13,7 @@ from custom_components.roommind.utils.device_utils import (
     ensure_room_has_devices,
     get_ac_eids,
     get_all_entity_ids,
+    get_cool_setpoint_floor,
     get_device_by_eid,
     get_direct_setpoint_eids,
     get_entity_ids_by_type,
@@ -25,6 +26,7 @@ from custom_components.roommind.utils.device_utils import (
     legacy_to_devices,
     migrate_heat_pump_devices,
     room_contributes_to_group,
+    scale_cool_floor_by_airflow,
 )
 
 # ---------------------------------------------------------------------------
@@ -777,3 +779,41 @@ class TestFanEfficiency:
         from custom_components.roommind.utils.device_utils import fan_efficiency
 
         assert fan_efficiency("Mute", self.LADDER, min_efficiency=0.3) == 0.3
+
+
+class TestCoolSetpointFloor:
+    """Anti-draft AC cooling setpoint floor."""
+
+    LADDER = ["Strong", "High", "Medium", "Low", "Mute"]
+
+    def test_unset_floor_reads_as_none(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac"}]
+        assert get_cool_setpoint_floor(devices, "climate.ac") is None
+
+    def test_blank_floor_reads_as_none(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "cool_setpoint_floor": ""}]
+        assert get_cool_setpoint_floor(devices, "climate.ac") is None
+
+    def test_numeric_floor_is_parsed(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "cool_setpoint_floor": "20.5"}]
+        assert get_cool_setpoint_floor(devices, "climate.ac") == 20.5
+
+    def test_floor_applies_in_full_at_quietest_speed(self):
+        assert scale_cool_floor_by_airflow(20.0, 16.0, "Mute", self.LADDER) == 20.0
+
+    def test_floor_collapses_to_device_min_at_top_of_ladder(self):
+        assert scale_cool_floor_by_airflow(20.0, 16.0, "Strong", self.LADDER) == 16.0
+
+    def test_floor_interpolates_across_the_ladder(self):
+        # "Medium" sits at the ladder midpoint → half the floor's lift above min.
+        assert scale_cool_floor_by_airflow(20.0, 16.0, "Medium", self.LADDER) == 18.0
+
+    def test_floor_below_device_min_is_ignored(self):
+        assert scale_cool_floor_by_airflow(14.0, 16.0, "Mute", self.LADDER) == 16.0
+
+    def test_ungraded_fan_mode_keeps_the_full_floor(self):
+        # "Auto" is dropped from the graded ladder; airflow is unknown, so stay safe.
+        assert scale_cool_floor_by_airflow(20.0, 16.0, "Auto", self.LADDER) == 20.0
+
+    def test_missing_fan_mode_keeps_the_full_floor(self):
+        assert scale_cool_floor_by_airflow(20.0, 16.0, None, self.LADDER) == 20.0

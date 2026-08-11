@@ -74,6 +74,7 @@ export interface DeviceConfig {
   fan_min_mode?: string; // auto: weakest allowed ladder speed ("" = ladder min)
   fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
+  cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
 }
 
 export type ConflictResolution =

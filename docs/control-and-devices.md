@@ -51,6 +51,14 @@ Best for:
 - radiator valves / TRVs
 - devices that need an exaggerated setpoint to actually deliver heat
 
+On an AC the same mechanism runs in reverse: at full cooling demand RoomMind sends the device's `min_temp` (typically `16°C`), which is what drives an inverter's compressor to full frequency. The setpoint is a power command, not a comfort target — the room target is enforced by RoomMind against the external sensor.
+
+#### Min AC setpoint (anti-draft)
+
+Optional, per AC device. Pinning an inverter to its coldest setpoint while the fan crawls drives the evaporator coil deep and makes the supply air feel icy, without buying much capacity — the airflow is the bottleneck, not the compressor. This setting is the warmest cooling setpoint RoomMind will send **at the quietest fan speed**; it relaxes linearly toward the device minimum as the fan ramps up, so daytime capacity and `Turbo` are unaffected.
+
+Leave it empty to always allow the device minimum. The floor never pushes the setpoint above the room's own target.
+
 ### Direct
 
 RoomMind sends the real target temperature and lets the device regulate itself.

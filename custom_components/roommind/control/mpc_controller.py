@@ -1322,6 +1322,7 @@ class MPCController:
         compressor_forced_off: set[str] | None = None,
         force_off: bool = False,
         fan_overrides: dict[str, str] | None = None,
+        ac_cool_floors: dict[str, float] | None = None,
     ) -> None:
         """Apply the determined mode with proportional valve control.
 
@@ -1330,6 +1331,7 @@ class MPCController:
         having no demand, so per-device idle_action must not keep devices
         running (#368).
         """
+        _cool_floors = ac_cool_floors or {}
         _forced_on = compressor_forced_on or set()
         _forced_off = compressor_forced_off or set()
         # Per-device active fan mode resolved by the coordinator (auto
@@ -1677,13 +1679,18 @@ class MPCController:
                 ac_cool_target = min(effective_target, ac_cool_target)
             else:
                 ac_cool_target = effective_target
-            ha_target = celsius_to_ha_temp(self.hass, ac_cool_target)
             ha_cool_direct = celsius_to_ha_temp(self.hass, effective_target)
             for eid in self.acs:
                 if eid in _forced_off:
                     await async_idle_device(self.hass, eid, self._devices, area_id=self._area_id, targets=targets)
                     continue
-                ha_t = ha_cool_direct if eid in self._direct_eids else ha_target
+                if eid in self._direct_eids:
+                    ha_t = ha_cool_direct
+                else:
+                    # Anti-draft floor: never colder than the room's own target.
+                    floor = _cool_floors.get(eid)
+                    eid_target = min(effective_target, max(ac_cool_target, floor)) if floor is not None else ac_cool_target
+                    ha_t = celsius_to_ha_temp(self.hass, eid_target)
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "cool"})
                 await self._call(
                     "set_temperature",

@@ -344,6 +344,7 @@ async def websocket_list_rooms(
                     vol.Optional("fan_min_mode", default=""): str,
                     vol.Optional("fan_max_mode", default=""): str,
                     vol.Optional("setpoint_mode", default="proportional"): vol.In(["proportional", "direct"]),
+                    vol.Optional("cool_setpoint_floor", default=None): vol.Any(None, "", vol.Coerce(float)),
                 },
                 _validate_device_idle_action,
             )
