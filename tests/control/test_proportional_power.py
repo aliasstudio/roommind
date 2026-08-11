@@ -716,3 +716,82 @@ async def test_call_deadband_converts_to_fahrenheit_units():
     )
     sent = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_temperature"]
     assert len(sent) == 1
+
+
+def _make_cooling_ac_controller(hass_temperature: float = 23.0):
+    """Controller with a single cooling AC whose ladder is Mute..Strong."""
+    hass = build_hass()
+    ac_state = MagicMock()
+    ac_state.state = "off"
+    ac_state.attributes = {
+        "hvac_modes": ["cool", "off"],
+        "temperature": hass_temperature,
+        "min_temp": 16.0,
+        "fan_modes": ["Strong", "High", "Medium", "Low", "Mute"],
+    }
+    hass.states.get = MagicMock(return_value=ac_state)
+    room = make_room(thermostats=[], acs=["climate.ac"])
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=35.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    return hass, ctrl
+
+
+def _sent_temperatures(hass) -> list[float]:
+    return [c[0][2]["temperature"] for c in hass.services.async_call.call_args_list if c[0][1] == "set_temperature"]
+
+
+@pytest.mark.asyncio
+async def test_ac_cool_floor_raises_setpoint_at_full_power():
+    """Anti-draft floor lifts the setpoint that would otherwise pin to device min."""
+    hass, ctrl = _make_cooling_ac_controller()
+    await ctrl.async_apply(
+        "cooling",
+        23.5,
+        power_fraction=1.0,
+        current_temp=24.5,
+        ac_cool_floors={"climate.ac": 20.0},
+    )
+    assert _sent_temperatures(hass) == [20.0]
+
+
+@pytest.mark.asyncio
+async def test_ac_cool_floor_never_exceeds_room_target():
+    """A floor above the room target is capped at the target, not sent as-is."""
+    hass, ctrl = _make_cooling_ac_controller()
+    await ctrl.async_apply(
+        "cooling",
+        19.0,
+        power_fraction=1.0,
+        current_temp=24.5,
+        ac_cool_floors={"climate.ac": 22.0},
+    )
+    assert _sent_temperatures(hass) == [19.0]
+
+
+@pytest.mark.asyncio
+async def test_ac_cool_floor_does_not_lower_a_gentler_setpoint():
+    """Low demand already yields a warm setpoint; the floor must not pull it down."""
+    hass, ctrl = _make_cooling_ac_controller(hass_temperature=16.0)
+    await ctrl.async_apply(
+        "cooling",
+        23.0,
+        power_fraction=0.1,
+        current_temp=26.0,
+        ac_cool_floors={"climate.ac": 20.0},
+    )
+    # 26 - 0.1*(26-16) = 25.0, clamped to the 23.0 target; the 20.0 floor is below it.
+    assert _sent_temperatures(hass) == [23.0]
+
+
+@pytest.mark.asyncio
+async def test_ac_without_floor_still_pins_to_device_min():
+    """Unconfigured devices keep the legacy full-power behavior."""
+    hass, ctrl = _make_cooling_ac_controller()
+    await ctrl.async_apply("cooling", 23.5, power_fraction=1.0, current_temp=24.5)
+    assert _sent_temperatures(hass) == [16.0]

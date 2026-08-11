@@ -78,12 +78,14 @@ from .utils.device_utils import (
     fan_efficiency,
     get_ac_eids,
     get_all_entity_ids,
+    get_cool_setpoint_floor,
     get_direct_setpoint_eids,
     get_fan_control,
     get_idle_action,
     get_trv_eids,
     order_fan_modes,
     room_contributes_to_group,
+    scale_cool_floor_by_airflow,
 )
 from .utils.history_store import HistoryStore
 from .utils.schedule_utils import resolve_schedule_index
@@ -972,6 +974,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 full_band=float(settings.get("fan_full_band", FAN_FULL_BAND_C)),
                 turbo=turbo,
             )
+            ac_cool_floors = self._resolve_ac_cool_floors(room, fan_overrides, device_min_temp)
             if dehumidifying:
                 # Dry mode + the scheduled target.  The cool target is
                 # preferred: drying is a warm-season job, and only the heat
@@ -1011,6 +1014,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         compressor_forced_off=compressor_forced_off or None,
                         force_off=force_off,
                         fan_overrides=fan_overrides or None,
+                        ac_cool_floors=ac_cool_floors or None,
                     )
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning(
@@ -1261,6 +1265,43 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if chosen is not None and controllable and (device_active or idle_setback):
                 overrides[eid] = chosen
         return overrides
+
+    def _resolve_ac_cool_floors(
+        self,
+        room: dict,
+        fan_overrides: dict[str, str],
+        device_min_temp: float | None,
+    ) -> dict[str, float]:
+        """Resolve the per-AC anti-draft cooling setpoint floor for this cycle.
+
+        Devices without a configured floor are absent from the map. Under turbo the
+        fan sits at the top of its ladder, which collapses the floor to the device
+        minimum on its own — no special case needed.
+        """
+        floors: dict[str, float] = {}
+        devices = room.get("devices", [])
+        for eid in get_ac_eids(devices):
+            floor = get_cool_setpoint_floor(devices, eid)
+            if floor is None:
+                continue
+            state = self.hass.states.get(eid)
+            if state is None:
+                continue
+            device_min = (
+                ha_temp_to_celsius(self.hass, state.attributes["min_temp"])
+                if state.attributes.get("min_temp") is not None
+                else device_min_temp
+            )
+            if device_min is None:
+                continue
+            fan_mode = fan_overrides.get(eid) or state.attributes.get("fan_mode")
+            floors[eid] = scale_cool_floor_by_airflow(
+                floor,
+                device_min,
+                fan_mode,
+                state.attributes.get("fan_modes") or [],
+            )
+        return floors
 
     def _make_fan_cap_resolver(self, room: dict, schedule_blocks: dict | None):
         """Build a ``(timestamp) -> cooling capacity multiplier`` for the MPC horizon.

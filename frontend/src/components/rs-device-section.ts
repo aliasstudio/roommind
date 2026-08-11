@@ -914,6 +914,24 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
+      ${isAc && this.selectedTempSensor && (device.setpoint_mode ?? "proportional") === "proportional"
+        ? html`
+            <div class="detail-field with-info">
+              <ha-textfield
+                .label=${localize("devices.cool_setpoint_floor", lang)}
+                .value=${device.cool_setpoint_floor == null ? "" : String(device.cool_setpoint_floor)}
+                .min=${String(entityState?.attributes?.min_temp ?? 16)}
+                .max=${String(entityState?.attributes?.max_temp ?? 30)}
+                step="0.5"
+                type="number"
+                @input=${(e: Event) => this._onCoolSetpointFloorChange(entityId, e)}
+              ></ha-textfield>
+              <rs-info-icon
+                .text=${localize("devices.cool_setpoint_floor_hint", lang)}
+              ></rs-info-icon>
+            </div>
+          `
+        : nothing}
       ${isThermostat && this.valveProtectionEnabled
         ? html`
             <div class="detail-toggle-row">
@@ -1043,6 +1061,16 @@ export class RsDeviceSection extends LitElement {
   private _onSetpointModeChange(entityId: string, mode: string): void {
     const newDevices = this.devices.map((d) =>
       d.entity_id === entityId ? { ...d, setpoint_mode: mode as "proportional" | "direct" } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onCoolSetpointFloorChange(entityId: string, event: Event): void {
+    const raw = (event.target as HTMLInputElement).value.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    const floor = parsed === null || Number.isNaN(parsed) ? null : parsed;
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, cool_setpoint_floor: floor } : d,
     );
     this._fireDeviceChanged(newDevices);
   }

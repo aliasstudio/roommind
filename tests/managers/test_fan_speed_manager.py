@@ -7,6 +7,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from homeassistant.const import UnitOfTemperature
+
 from custom_components.roommind.const import TargetTemps
 from custom_components.roommind.coordinator import RoomMindCoordinator
 from custom_components.roommind.managers.fan_speed_manager import (
@@ -480,3 +482,47 @@ def test_room_for_control_applies_schedule_idle():
     assert out["devices"][0]["idle_fan_mode"] == "Mute"
     assert out["devices"][1]["idle_action"] == "low"  # TRV unaffected
     assert room["devices"][0]["idle_action"] == "off"
+
+
+# ---------------------------------------------------------------------------
+# Coordinator._resolve_ac_cool_floors
+# ---------------------------------------------------------------------------
+
+
+def _floor_coordinator(fan_mode, *, min_temp=16.0):
+    state = MagicMock()
+    state.state = "cool"
+    state.attributes = {"fan_mode": fan_mode, "fan_modes": LADDER_LABELS, "min_temp": min_temp}
+    hass = MagicMock()
+    hass.config.units.temperature_unit = UnitOfTemperature.CELSIUS
+    hass.states.get = MagicMock(return_value=state)
+    return SimpleNamespace(hass=hass)
+
+
+def _resolve_floors(fan_mode, overrides, device_floor=20.0, **kw):
+    fake = _floor_coordinator(fan_mode, **kw)
+    devices = [{"entity_id": "climate.ac1", "type": "ac"}]
+    if device_floor is not None:
+        devices[0]["cool_setpoint_floor"] = device_floor
+    return RoomMindCoordinator._resolve_ac_cool_floors(fake, {"devices": devices}, overrides, 16.0)
+
+
+def test_cool_floor_uses_the_fan_override_for_this_cycle():
+    """The speed RoomMind is about to command wins over the device's stale state."""
+    # Device still reports Strong, but this cycle commands Mute -> full floor.
+    assert _resolve_floors("Strong", {"climate.ac1": "Mute"}) == {"climate.ac1": 20.0}
+
+
+def test_cool_floor_falls_back_to_the_reported_fan_mode():
+    """Without an override (e.g. fan_control='fixed') the device's own speed is used."""
+    assert _resolve_floors("Mute", {}) == {"climate.ac1": 20.0}
+
+
+def test_cool_floor_relaxes_at_full_fan():
+    """Turbo and High-fan cycles collapse the floor to the device minimum."""
+    assert _resolve_floors("Mute", {"climate.ac1": "Strong"}) == {"climate.ac1": 16.0}
+
+
+def test_cool_floor_absent_for_unconfigured_devices():
+    """No configured floor -> the device is left out of the map entirely."""
+    assert _resolve_floors("Mute", {}, device_floor=None) == {}

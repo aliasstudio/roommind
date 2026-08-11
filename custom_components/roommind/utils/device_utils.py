@@ -123,13 +123,60 @@ def fan_efficiency(fan_mode: str, fan_modes: list[str], *, min_efficiency: float
     has fewer than two graded speeds — preserving legacy behavior for devices
     whose fan RoomMind can't reason about (e.g. "Auto"-only).
     """
-    if not fan_mode:
+    frac = fan_ladder_position(fan_mode, fan_modes)
+    if frac is None:
         return 1.0
+    return min_efficiency + (1.0 - min_efficiency) * frac
+
+
+def fan_ladder_position(fan_mode: str, fan_modes: list[str]) -> float | None:
+    """Position of *fan_mode* on its graded ladder: 0.0 weakest, 1.0 strongest.
+
+    Returns None when the mode isn't on a graded ladder or the ladder has fewer
+    than two graded speeds — i.e. when airflow can't be reasoned about.
+    """
+    if not fan_mode:
+        return None
     ladder = order_fan_modes(fan_modes)
     if len(ladder) < 2 or fan_mode not in ladder:
-        return 1.0
-    frac = ladder.index(fan_mode) / (len(ladder) - 1)
-    return min_efficiency + (1.0 - min_efficiency) * frac
+        return None
+    return ladder.index(fan_mode) / (len(ladder) - 1)
+
+
+def get_cool_setpoint_floor(devices: list[dict], entity_id: str) -> float | None:
+    """Warmest AC cooling setpoint allowed at minimum airflow, or None if unset."""
+    dev = get_device_by_eid(devices, entity_id)
+    if dev is None:
+        return None
+    raw = dev.get("cool_setpoint_floor")
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def scale_cool_floor_by_airflow(
+    floor: float,
+    device_min: float,
+    fan_mode: str | None,
+    fan_modes: list[str],
+) -> float:
+    """Relax the cooling setpoint floor as airflow rises.
+
+    Cold-draft discomfort tracks compressor demand *per unit airflow*: pinning an
+    inverter to its minimum setpoint while the fan crawls drives the coil deep and
+    makes the supply air unpleasantly cold without buying much capacity. The floor
+    therefore applies in full at the quietest speed and relaxes linearly to
+    *device_min* at the top of the ladder, where the draft is no longer a problem.
+    """
+    if floor <= device_min:
+        return device_min
+    airflow = fan_ladder_position(fan_mode or "", fan_modes)
+    if airflow is None:
+        return floor
+    return device_min + (1.0 - airflow) * (floor - device_min)
 
 
 def get_fan_control(devices: list[dict], entity_id: str) -> tuple[str, str, str]:

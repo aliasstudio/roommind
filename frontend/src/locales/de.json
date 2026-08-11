@@ -205,6 +205,8 @@
   "devices.setpoint_mode": "Sollwert-Modus",
   "devices.setpoint_mode_proportional": "Proportional (Ventilsteuerung)",
   "devices.setpoint_mode_direct": "Direkt (Gerät regelt selbst)",
+  "devices.cool_setpoint_floor": "Min. Kühl-Sollwert (Zugluftschutz)",
+  "devices.cool_setpoint_floor_hint": "Wärmster Kühl-Sollwert, den RoomMind bei der leisesten Lüfterstufe sendet. Ein Inverter auf dem kältesten Sollwert bei minimalem Luftstrom kühlt den Wärmetauscher stark ab und lässt die Ausblasluft eisig wirken, ohne viel Leistung zu bringen. Mit steigender Lüfterstufe nähert sich die Grenze dem Geräteminimum. Leer lassen, um immer das Geräteminimum zu nutzen.",
   "devices.setpoint_mode_hint": "Direkt sendet die tatsächliche Raum-Zieltemperatur ans Gerät — geeignet für Thermostate und Heizlüfter mit eigener Regelung. Proportional sendet einen erhöhten Sollwert Richtung Geräte-max_temp — geeignet für Heizkörperventile (TRVs).",
   "devices.valve_protection_excluded": "Vom Ventilschutz ausgenommen",
   "devices.valve_protection_exclude_hint": "Dieses Gerät wird nicht vom Ventilschutz bewegt (z.B. virtuelle Kessel-Entitäten)",
