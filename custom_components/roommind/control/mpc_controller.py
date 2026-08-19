@@ -1705,6 +1705,17 @@ class MPCController:
                     continue
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
         elif mode == MODE_IDLE:
+            _override_active = is_override_active(self.room_config)
+            outdoor_cold_gate = (
+                self.outdoor_temp is not None
+                and self.outdoor_temp < self.outdoor_cooling_min
+                and not _override_active
+            )
+            outdoor_hot_gate = (
+                self.outdoor_temp is not None
+                and self.outdoor_temp > self.outdoor_heating_max
+                and not _override_active
+            )
             for eid in thermostats + self.acs:
                 if eid in _forced_on:
                     # Compressor min-run: set target temp so device self-regulates
@@ -1745,6 +1756,14 @@ class MPCController:
                         self._area_id,
                         eid,
                     )
+                    continue
+                # Outdoor safety gate: never leave a device armed in an active
+                # hvac_mode outside its allowed outdoor range — a "setback" or
+                # "fan_only" idle_action keeps hvac_mode=cool/heat, and the
+                # unit's own onboard thermostat could self-engage the compressor
+                # regardless of what RoomMind commands next cycle.
+                if (eid in self.acs and outdoor_cold_gate) or (eid in thermostats and outdoor_hot_gate):
+                    await async_turn_off_climate(self.hass, eid, area_id=self._area_id)
                     continue
                 await async_idle_device(
                     self.hass,

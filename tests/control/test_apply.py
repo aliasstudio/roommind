@@ -3984,6 +3984,49 @@ async def test_idle_setback_snaps_to_step():
 
 
 @pytest.mark.asyncio
+async def test_mode_idle_outdoor_cold_gate_forces_ac_off_despite_setback():
+    """Outdoor colder than outdoor_cooling_min must hard-off the AC.
+
+    Reproduces a real report: cool_only room, schedule sets idle_action=setback,
+    outdoor drops well below outdoor_cooling_min. MODE_IDLE must not leave the
+    AC armed in hvac_mode=cool (setback keeps it there for normal idling) since
+    the unit's own onboard thermostat could self-engage the compressor with no
+    regard for the outdoor gate that RoomMind itself respects.
+    """
+    hass = build_hass()
+    ac_state = MagicMock()
+    ac_state.state = "cool"
+    ac_state.attributes = {
+        "hvac_modes": ["cool", "off"],
+        "current_temperature": 24.0,
+        "temperature": 26.0,
+        "min_temp": 16.0,
+        "max_temp": 30.0,
+    }
+    hass.states.get = MagicMock(return_value=ac_state)
+
+    room = make_room(thermostats=[], acs=["climate.ac1"], climate_mode="cool_only", temperature_sensor="")
+    room["devices"] = [
+        {"entity_id": "climate.ac1", "type": "ac", "role": "auto", "idle_action": "setback", "setpoint_mode": "proportional"}
+    ]
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=-20.0,
+        settings={"outdoor_cooling_min": 20.0},
+        has_external_sensor=False,
+    )
+    await ctrl.async_apply("idle", TargetTemps(heat=None, cool=24.0))
+
+    calls = hass.services.async_call.call_args_list
+    hvac = [c for c in calls if c[0][1] == "set_hvac_mode" and c[0][2]["entity_id"] == "climate.ac1"]
+    assert any(c[0][2]["hvac_mode"] == "off" for c in hvac), f"Expected off, got: {hvac}"
+    temp = [c for c in calls if c[0][1] == "set_temperature" and c[0][2]["entity_id"] == "climate.ac1"]
+    assert not any(t[0][2]["temperature"] == 26.0 for t in temp), "AC must not be left at setback setpoint (26)"
+
+
+@pytest.mark.asyncio
 async def test_snap_reclamps_to_max():
     hass = build_hass()
     state = MagicMock()
