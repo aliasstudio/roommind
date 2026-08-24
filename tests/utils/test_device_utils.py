@@ -14,6 +14,7 @@ from custom_components.roommind.utils.device_utils import (
     get_ac_eids,
     get_all_entity_ids,
     get_cool_setpoint_floor,
+    get_dehumidify_target,
     get_device_by_eid,
     get_direct_setpoint_eids,
     get_entity_ids_by_type,
@@ -817,3 +818,23 @@ class TestCoolSetpointFloor:
 
     def test_missing_fan_mode_keeps_the_full_floor(self):
         assert scale_cool_floor_by_airflow(20.0, 16.0, None, self.LADDER) == 20.0
+
+
+class TestDehumidifyTarget:
+    """Per-device dry-mode setpoint override."""
+
+    def test_unset_target_reads_as_none(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac"}]
+        assert get_dehumidify_target(devices, "climate.ac") is None
+
+    def test_blank_target_reads_as_none(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "dehumidify_target": ""}]
+        assert get_dehumidify_target(devices, "climate.ac") is None
+
+    def test_numeric_target_is_parsed(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "dehumidify_target": "19"}]
+        assert get_dehumidify_target(devices, "climate.ac") == 19.0
+
+    def test_unknown_device_reads_as_none(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "dehumidify_target": "19"}]
+        assert get_dehumidify_target(devices, "climate.other") is None

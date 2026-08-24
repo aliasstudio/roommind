@@ -932,6 +932,24 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
+      ${isAc && this.selectedTempSensor && hvacModes.includes("dry")
+        ? html`
+            <div class="detail-field with-info">
+              <ha-textfield
+                .label=${localize("devices.dehumidify_target", lang)}
+                .value=${device.dehumidify_target == null ? "" : String(device.dehumidify_target)}
+                .min=${String(entityState?.attributes?.min_temp ?? 16)}
+                .max=${String(entityState?.attributes?.max_temp ?? 30)}
+                step="0.5"
+                type="number"
+                @input=${(e: Event) => this._onDehumidifyTargetChange(entityId, e)}
+              ></ha-textfield>
+              <rs-info-icon
+                .text=${localize("devices.dehumidify_target_hint", lang)}
+              ></rs-info-icon>
+            </div>
+          `
+        : nothing}
       ${isThermostat && this.valveProtectionEnabled
         ? html`
             <div class="detail-toggle-row">
@@ -1071,6 +1089,16 @@ export class RsDeviceSection extends LitElement {
     const floor = parsed === null || Number.isNaN(parsed) ? null : parsed;
     const newDevices = this.devices.map((d) =>
       d.entity_id === entityId ? { ...d, cool_setpoint_floor: floor } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onDehumidifyTargetChange(entityId: string, event: Event): void {
+    const raw = (event.target as HTMLInputElement).value.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    const target = parsed === null || Number.isNaN(parsed) ? null : parsed;
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, dehumidify_target: target } : d,
     );
     this._fireDeviceChanged(newDevices);
   }

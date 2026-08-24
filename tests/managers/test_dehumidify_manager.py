@@ -258,6 +258,23 @@ async def test_apply_survives_service_failure(dm, hass):
     await dm.async_apply("bedroom", [AC])  # must not raise
 
 
+@pytest.mark.asyncio
+async def test_dry_target_override_wins_over_scheduled_target(dm, hass):
+    """A per-device dehumidify_target overrides the room's scheduled target."""
+    await dm.async_apply("bedroom", [AC], 24.0, dry_targets={AC: 19.0})
+    calls = _temp_calls(hass)
+    assert len(calls) == 1
+    assert calls[0].args[2]["temperature"] == 19.0
+
+
+@pytest.mark.asyncio
+async def test_dry_target_override_absent_falls_back_to_scheduled_target(dm, hass):
+    """Devices without an override still get the room's scheduled target."""
+    await dm.async_apply("bedroom", [AC], 24.0, dry_targets={})
+    calls = _temp_calls(hass)
+    assert calls[0].args[2]["temperature"] == 24.0
+
+
 def test_remove_room_clears_state(dm):
     dm.evaluate("bedroom", _settings(), current_humidity=62.0, ac_eids=[AC])
     dm.remove_room("bedroom")

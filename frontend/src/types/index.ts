@@ -75,6 +75,7 @@ export interface DeviceConfig {
   fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
   cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
+  dehumidify_target?: number | null; // ac: dry-mode setpoint override (null = room's scheduled cool target)
 }
 
 export type ConflictResolution =

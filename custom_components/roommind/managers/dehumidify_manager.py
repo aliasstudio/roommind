@@ -154,6 +154,7 @@ class DehumidifyManager:
         ac_eids: list[str],
         target_temp: float | None = None,
         fan_caps: dict[str, str] | None = None,
+        dry_targets: dict[str, float] | None = None,
     ) -> None:
         """Drive every dry-capable AC in *area_id* into dry mode.
 
@@ -163,6 +164,13 @@ class DehumidifyManager:
         down to min_temp to force cooling, which would freeze the room for what
         is a humidity job.
 
+        *dry_targets* maps entity_id -> a per-device dry-mode target override
+        (the ``dehumidify_target`` device setting).  Some ACs barely dry when
+        their setpoint sits close to room temperature — their dry-mode logic
+        uses it as a hysteresis reference, not a hard target — so a user can
+        pin a colder target specifically for drying. Present entries win over
+        *target_temp* for that device.
+
         *fan_caps* maps entity_id -> a fan-speed label (the effective
         ``fan_max_mode`` from the schedule/device).  This AC keeps its fan
         controllable and otherwise runs it on Auto — which blows hard and makes
@@ -170,6 +178,7 @@ class DehumidifyManager:
         quiet and gentle.  No entry (or no cap configured) leaves the fan alone.
         """
         fan_caps = fan_caps or {}
+        dry_targets = dry_targets or {}
         for eid in ac_eids:
             state = self.hass.states.get(eid)
             if not supports_dry(state):
@@ -191,8 +200,9 @@ class DehumidifyManager:
                         exc_info=True,
                     )
                     continue
-            if target_temp is not None:
-                await self._async_set_target(area_id, eid, target_temp)
+            eid_target = dry_targets.get(eid, target_temp)
+            if eid_target is not None:
+                await self._async_set_target(area_id, eid, eid_target)
             cap = fan_caps.get(eid)
             if cap:
                 await self._async_set_fan(area_id, eid, cap)

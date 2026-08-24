@@ -157,6 +157,20 @@ def get_cool_setpoint_floor(devices: list[dict], entity_id: str) -> float | None
         return None
 
 
+def get_dehumidify_target(devices: list[dict], entity_id: str) -> float | None:
+    """Per-device dry-mode target override, or None to use the room's schedule target."""
+    dev = get_device_by_eid(devices, entity_id)
+    if dev is None:
+        return None
+    raw = dev.get("dehumidify_target")
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def scale_cool_floor_by_airflow(
     floor: float,
     device_min: float,
