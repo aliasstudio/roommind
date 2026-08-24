@@ -59,6 +59,12 @@ Optional, per AC device. Pinning an inverter to its coldest setpoint while the f
 
 Leave it empty to always allow the device minimum. The floor never pushes the setpoint above the room's own target.
 
+#### Dry mode target
+
+Optional, per AC device. While a room is actively dehumidifying (see `Active dehumidification` below), RoomMind normally sends the room's scheduled cooling target as the AC's setpoint. Some units barely dry when that setpoint sits close to the current room temperature — their dry-mode logic treats it as a hysteresis reference rather than a hard target, so drying stalls without the compressor working the coil.
+
+This setting overrides the setpoint sent specifically while drying, independent of the room's schedule and the anti-draft floor above. Leave it empty to keep using the room's scheduled cooling target.
+
 ### Direct
 
 RoomMind sends the real target temperature and lets the device regulate itself.

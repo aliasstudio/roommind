@@ -207,6 +207,8 @@
   "devices.setpoint_mode_direct": "Direct (l'appareil régule)",
   "devices.cool_setpoint_floor": "Consigne froid min. (anti-courant d'air)",
   "devices.cool_setpoint_floor_hint": "Consigne de refroidissement la plus chaude envoyée par RoomMind à la vitesse de ventilation la plus faible. Bloquer un inverter sur sa consigne la plus froide avec un débit d'air minimal refroidit fortement l'échangeur et rend l'air soufflé glacial sans gagner beaucoup de puissance. La limite se relâche vers le minimum de l'appareil à mesure que le ventilateur monte. Laisser vide pour toujours utiliser le minimum de l'appareil.",
+  "devices.dehumidify_target": "Consigne en mode Sec",
+  "devices.dehumidify_target_hint": "Consigne envoyée par RoomMind pendant que ce climatiseur déshumidifie activement. Certains appareils sèchent à peine quand la consigne est proche de la température ambiante actuelle — ils l'utilisent comme référence d'hystérésis, pas comme cible stricte. Laisser vide pour utiliser la consigne de refroidissement programmée de la pièce.",
   "devices.setpoint_mode_hint": "Direct envoie la cible réelle de la pièce à l'appareil — idéal pour les thermostats et les chauffages d'appoint qui se régulent eux-mêmes. Proportionnel envoie une consigne renforcée vers la température maximale de l'appareil — idéal pour les vannes de radiateur (TRV).",
   "devices.valve_protection_excluded": "Exclu de la protection des vannes",
   "devices.valve_protection_exclude_hint": "Cette entité ne sera pas cyclée par la protection des vannes (ex. entités chaudière virtuelles)",

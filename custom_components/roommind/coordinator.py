@@ -79,6 +79,7 @@ from .utils.device_utils import (
     get_ac_eids,
     get_all_entity_ids,
     get_cool_setpoint_floor,
+    get_dehumidify_target,
     get_direct_setpoint_eids,
     get_fan_control,
     get_idle_action,
@@ -987,16 +988,21 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 _dh_devices = room.get("devices", [])
                 _dh_acs = get_ac_eids(_dh_devices)
                 dry_fan_caps: dict[str, str] = {}
+                dry_targets: dict[str, float] = {}
                 for _eid in _dh_acs:
                     _, _, _max_label = get_fan_control(_dh_devices, _eid)
                     _cap = (schedule_fan or {}).get("fan_max_mode", _max_label)
                     if _cap:
                         dry_fan_caps[_eid] = _cap
+                    _target_override = get_dehumidify_target(_dh_devices, _eid)
+                    if _target_override is not None:
+                        dry_targets[_eid] = _target_override
                 await self._dehumidify_manager.async_apply(
                     area_id,
                     _dh_acs,
                     dry_target,
                     dry_fan_caps or None,
+                    dry_targets or None,
                 )
             else:
                 try:
