@@ -29,8 +29,8 @@ from custom_components.roommind.utils.schedule_utils import (
 # resolve_schedule_idle
 # ---------------------------------------------------------------------------
 
-_MON_NIGHT = datetime(2024, 1, 1, 2, 0).timestamp()  # 2024-01-01 is a Monday
-_MON_DAY = datetime(2024, 1, 1, 12, 0).timestamp()
+_MON_NIGHT = datetime(2024, 1, 1, 2, 0, tzinfo=UTC).timestamp()  # 2024-01-01 is a Monday
+_MON_DAY = datetime(2024, 1, 1, 12, 0, tzinfo=UTC).timestamp()
 
 _IDLE_BLOCKS = {
     "monday": [
