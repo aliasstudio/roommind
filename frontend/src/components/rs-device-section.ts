@@ -883,6 +883,97 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
+      ${isThermostat && this.selectedTempSensor
+        ? html`
+            <div class="detail-field with-info">
+              <ha-entity-picker
+                .hass=${this.hass}
+                .includeDomains=${["number"]}
+                .value=${device.valve_opening_entity ?? ""}
+                label=${localize("devices.valve_opening_entity", lang)}
+                allow-custom-entity
+                @value-changed=${(e: CustomEvent) =>
+                  this._onValveEntityChange(entityId, "valve_opening_entity", e.detail.value ?? "")}
+              ></ha-entity-picker>
+              <rs-info-icon
+                .text=${localize("devices.valve_opening_entity_hint", lang)}
+              ></rs-info-icon>
+            </div>
+            ${device.valve_opening_entity
+              ? html`
+                  <div class="detail-field">
+                    <ha-entity-picker
+                      .hass=${this.hass}
+                      .includeDomains=${["number"]}
+                      .value=${device.valve_closing_entity ?? ""}
+                      label=${localize("devices.valve_closing_entity", lang)}
+                      allow-custom-entity
+                      @value-changed=${(e: CustomEvent) =>
+                        this._onValveEntityChange(
+                          entityId,
+                          "valve_closing_entity",
+                          e.detail.value ?? "",
+                        )}
+                    ></ha-entity-picker>
+                  </div>
+                  <div class="detail-field with-info">
+                    <ha-textfield
+                      .label=${localize("devices.valve_min_opening", lang)}
+                      .value=${String(device.valve_min_opening ?? 10)}
+                      min="0"
+                      max="100"
+                      step="1"
+                      type="number"
+                      @input=${(e: Event) =>
+                        this._onValveNumberChange(entityId, "valve_min_opening", e, 10)}
+                    ></ha-textfield>
+                    <rs-info-icon
+                      .text=${localize("devices.valve_min_opening_hint", lang)}
+                    ></rs-info-icon>
+                  </div>
+                  <div class="detail-field">
+                    <ha-textfield
+                      .label=${localize("devices.valve_max_opening", lang)}
+                      .value=${String(device.valve_max_opening ?? 100)}
+                      min="1"
+                      max="100"
+                      step="1"
+                      type="number"
+                      @input=${(e: Event) =>
+                        this._onValveNumberChange(entityId, "valve_max_opening", e, 100)}
+                    ></ha-textfield>
+                  </div>
+                  <div class="detail-field">
+                    <ha-textfield
+                      .label=${localize("devices.valve_opening_threshold", lang)}
+                      .value=${String(device.valve_opening_threshold ?? 5)}
+                      min="0"
+                      max="100"
+                      step="1"
+                      type="number"
+                      @input=${(e: Event) =>
+                        this._onValveNumberChange(entityId, "valve_opening_threshold", e, 5)}
+                    ></ha-textfield>
+                  </div>
+                  <div class="detail-field with-info">
+                    <ha-textfield
+                      .label=${localize("devices.valve_deadband", lang)}
+                      .value=${String(device.valve_deadband ?? 5)}
+                      min="0"
+                      max="50"
+                      step="1"
+                      type="number"
+                      @input=${(e: Event) =>
+                        this._onValveNumberChange(entityId, "valve_deadband", e, 5)}
+                    ></ha-textfield>
+                    <rs-info-icon
+                      .text=${localize("devices.valve_deadband_hint", lang)}
+                    ></rs-info-icon>
+                  </div>
+                `
+              : nothing}
+          `
+        : nothing}
       ${this.selectedTempSensor
         ? html`
             <div class="detail-field with-info">
@@ -914,12 +1005,16 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
-      ${isAc && this.selectedTempSensor && (device.setpoint_mode ?? "proportional") === "proportional"
+      ${isAc &&
+      this.selectedTempSensor &&
+      (device.setpoint_mode ?? "proportional") === "proportional"
         ? html`
             <div class="detail-field with-info">
               <ha-textfield
                 .label=${localize("devices.cool_setpoint_floor", lang)}
-                .value=${device.cool_setpoint_floor == null ? "" : String(device.cool_setpoint_floor)}
+                .value=${device.cool_setpoint_floor == null
+                  ? ""
+                  : String(device.cool_setpoint_floor)}
                 .min=${String(entityState?.attributes?.min_temp ?? 16)}
                 .max=${String(entityState?.attributes?.max_temp ?? 30)}
                 step="0.5"
@@ -1074,6 +1169,29 @@ export class RsDeviceSection extends LitElement {
       d.entity_id === entityId ? { ...d, fan_max_mode: fanMode } : d,
     );
     this._fireDeviceChanged(newDevices);
+  }
+
+  private _onValveEntityChange(
+    entityId: string,
+    key: "valve_opening_entity" | "valve_closing_entity",
+    value: string,
+  ): void {
+    this._fireDeviceChanged(
+      this.devices.map((d) => (d.entity_id === entityId ? { ...d, [key]: value } : d)),
+    );
+  }
+
+  private _onValveNumberChange(
+    entityId: string,
+    key: "valve_min_opening" | "valve_max_opening" | "valve_opening_threshold" | "valve_deadband",
+    event: Event,
+    fallback: number,
+  ): void {
+    const parsed = Number((event.target as HTMLInputElement).value.trim());
+    const value = Number.isFinite(parsed) ? parsed : fallback;
+    this._fireDeviceChanged(
+      this.devices.map((d) => (d.entity_id === entityId ? { ...d, [key]: value } : d)),
+    );
   }
 
   private _onSetpointModeChange(entityId: string, mode: string): void {

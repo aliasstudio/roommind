@@ -54,6 +54,7 @@ from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
 from .mpc_optimizer import MPCOptimizer, MPCPlan
 from .residual_heat import get_min_run_blocks
 from .thermal_model import RoomModelManager
+from .valve_regulation import async_apply_valve_demand, get_valve_config
 
 if TYPE_CHECKING:
     from ..managers.heat_source_orchestrator import HeatSourcePlan
@@ -401,6 +402,13 @@ async def async_idle_device(
     idle_action, idle_fan_mode = get_idle_action(devices, entity_id)
     if force_off and idle_action != IDLE_ACTION_LOW:
         idle_action = IDLE_ACTION_OFF
+
+    # Valve-regulated TRVs: no demand means a shut valve, whatever the head's
+    # own thermostat thinks. Done before the idle_action branches so it also
+    # applies when the climate entity keeps running ("low"/"setback").
+    valve_config = get_valve_config(devices, entity_id)
+    if valve_config is not None:
+        await async_apply_valve_demand(hass, entity_id, valve_config, 0, area_id=area_id)
 
     # Fallback low setpoint (in HA display units) for devices where min_temp
     # is not effective (e.g. Wavin Sentio with min_temp=0 or high min_temp).
@@ -1532,6 +1540,8 @@ class MPCController:
                     continue
                 if cmd.active:
                     if cmd.device_type == "thermostat":
+                        if await self._async_drive_valve_trv(cmd.entity_id, cmd.power_fraction, trv_heat_boost):
+                            continue
                         if self.has_external_sensor and current_temp is not None:
                             t = round(
                                 current_temp + cmd.power_fraction * (trv_heat_boost - current_temp),
@@ -1622,6 +1632,8 @@ class MPCController:
             for eid in thermostats:
                 if eid in _forced_off:
                     await async_idle_device(self.hass, eid, self._devices, area_id=self._area_id, targets=targets)
+                    continue
+                if await self._async_drive_valve_trv(eid, power_fraction, trv_heat_boost):
                     continue
                 ha_t = ha_trv_direct if eid in self._direct_eids else ha_trv
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
@@ -1793,6 +1805,34 @@ class MPCController:
         if abs(current_temp - effective_target) <= 1.0:
             return PROPORTIONAL_DEADBAND_NEAR_TARGET_C
         return PROPORTIONAL_DEADBAND_C
+
+    async def _async_drive_valve_trv(self, eid: str, fraction: float, boost_target: float) -> bool:
+        """Drive a valve-regulated TRV, returning False when it is not one.
+
+        The head's own thermostat is parked at the boost setpoint so it always
+        demands heat; how far the valve actually opens is written directly from
+        the MPC power fraction. Needs an external room sensor — without one the
+        head must keep regulating on its own and the setpoint path applies.
+        """
+        if not self.has_external_sensor:
+            return False
+        valve_config = get_valve_config(self._devices, eid)
+        if valve_config is None:
+            return False
+        await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
+        await self._call(
+            "set_temperature",
+            {"entity_id": eid, "temperature": celsius_to_ha_temp(self.hass, boost_target), "hvac_mode": "heat"},
+            temp_intent="heat",
+        )
+        await async_apply_valve_demand(
+            self.hass,
+            eid,
+            valve_config,
+            max(0.0, min(1.0, fraction)) * 100,
+            area_id=self._area_id,
+        )
+        return True
 
     async def _apply_active_fan_mode(self, eid: str) -> None:
         """Apply the configured active fan mode while a device heats/cools.

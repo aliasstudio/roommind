@@ -76,6 +76,12 @@ export interface DeviceConfig {
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
   cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
   dehumidify_target?: number | null; // ac: dry-mode setpoint override (null = room's scheduled cool target)
+  valve_opening_entity?: string; // trv: number.* valve opening degree; set = direct valve regulation
+  valve_closing_entity?: string; // trv: number.* valve closing degree (mirrored, optional)
+  valve_min_opening?: number; // trv: lowest opening degree that still passes water (default 10)
+  valve_max_opening?: number; // trv: head's usable maximum opening degree (default 100)
+  valve_opening_threshold?: number; // trv: demand % below which the valve is shut (default 5)
+  valve_deadband?: number; // trv: smallest opening change worth sending (default 5)
 }
 
 export type ConflictResolution =

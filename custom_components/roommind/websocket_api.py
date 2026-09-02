@@ -21,6 +21,10 @@ from .const import (
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
     DEFAULT_TURBO_COOL,
+    DEFAULT_VALVE_DEADBAND,
+    DEFAULT_VALVE_MAX_OPENING,
+    DEFAULT_VALVE_MIN_OPENING,
+    DEFAULT_VALVE_OPENING_THRESHOLD,
     DOMAIN,
     OVERRIDE_TYPES,
     build_override_live,
@@ -346,6 +350,20 @@ async def websocket_list_rooms(
                     vol.Optional("setpoint_mode", default="proportional"): vol.In(["proportional", "direct"]),
                     vol.Optional("cool_setpoint_floor", default=None): vol.Any(None, "", vol.Coerce(float)),
                     vol.Optional("dehumidify_target", default=None): vol.Any(None, "", vol.Coerce(float)),
+                    vol.Optional("valve_opening_entity", default=""): str,
+                    vol.Optional("valve_closing_entity", default=""): str,
+                    vol.Optional("valve_min_opening", default=DEFAULT_VALVE_MIN_OPENING): vol.All(
+                        vol.Coerce(int), vol.Range(min=0, max=100)
+                    ),
+                    vol.Optional("valve_max_opening", default=DEFAULT_VALVE_MAX_OPENING): vol.All(
+                        vol.Coerce(int), vol.Range(min=1, max=100)
+                    ),
+                    vol.Optional("valve_opening_threshold", default=DEFAULT_VALVE_OPENING_THRESHOLD): vol.All(
+                        vol.Coerce(int), vol.Range(min=0, max=100)
+                    ),
+                    vol.Optional("valve_deadband", default=DEFAULT_VALVE_DEADBAND): vol.All(
+                        vol.Coerce(int), vol.Range(min=0, max=50)
+                    ),
                 },
                 _validate_device_idle_action,
             )
