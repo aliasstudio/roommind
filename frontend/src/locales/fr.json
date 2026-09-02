@@ -569,8 +569,8 @@
   "heat_source.outdoor_threshold": "Seuil de préférence extérieur",
   "heat_source.outdoor_threshold_hint": "Au-dessus de cette température extérieure, privilégier la climatisation/pompe à chaleur (efficacité supérieure). En dessous, privilégier la chaudière à gaz/radiateur.",
   "heat_source.outdoor_threshold_suffix": "°C",
-  "heat_source.ac_min_outdoor": "Température extérieure min. pour la climatisation",
-  "heat_source.ac_min_outdoor_hint": "Désactiver complètement la climatisation en dessous de cette température pour protéger le matériel de la pompe à chaleur.",
+  "heat_source.ac_min_outdoor": "Arrêt du chauffage par clim",
+  "heat_source.ac_min_outdoor_hint": "En dessous de cette température extérieure, la climatisation cesse totalement de chauffer, ce qui protège la pompe à chaleur. Seul la chaudière/le radiateur chauffe en dessous.",
   "heat_source.ac_min_outdoor_suffix": "°C",
   "heat_source.summary_disabled": "La sélection intelligente de la source est désactivée"
 }
