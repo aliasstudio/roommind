@@ -114,6 +114,10 @@ export class RsRoomDetail extends LitElement {
       column-width: 360px;
       column-gap: 16px;
       column-fill: balance;
+      /* Flex item: without this it cannot shrink below the multicol
+         min-content width (count x column-width), which Firefox resolves
+         from the declared column-count and then overflows the panel. */
+      min-width: 0;
     }
 
     .detail-grid > * {
