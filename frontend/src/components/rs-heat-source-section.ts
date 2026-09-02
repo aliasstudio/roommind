@@ -4,8 +4,6 @@ import type { HomeAssistant } from "../types";
 import { localize } from "../utils/localize";
 import { inputStyles } from "../styles/input-styles";
 
-import "./shared/rs-info-icon";
-
 @customElement("rs-heat-source-section")
 export class RsHeatSourceSection extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
@@ -78,44 +76,38 @@ export class RsHeatSourceSection extends LitElement {
 
       .thresholds {
         margin-top: 16px;
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
+        display: flex;
+        flex-direction: column;
       }
 
-      @media (max-width: 600px) {
-        .thresholds {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      .threshold-cell {
+      .threshold-row {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        padding: 12px 14px;
-        border: 1px solid var(--divider-color);
-        border-radius: 10px;
-        background: var(--card-background-color);
+        padding: 16px 0;
+        border-top: 1px solid var(--divider-color);
+      }
+
+      .threshold-row:first-child {
+        border-top: none;
+        padding-top: 0;
       }
 
       .threshold-label {
-        font-size: 12px;
+        font-size: 14px;
         font-weight: 500;
+        color: var(--primary-text-color);
+      }
+
+      .threshold-hint {
+        font-size: 13px;
         color: var(--secondary-text-color);
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        line-height: 1.3;
+        line-height: 1.4;
       }
 
-      .threshold-label > span {
-        flex: 1;
-        min-width: 0;
-      }
-
-      .threshold-cell ha-textfield {
+      .threshold-row ha-textfield {
         width: 100%;
+        max-width: 220px;
       }
     `,
   ];
@@ -153,7 +145,7 @@ export class RsHeatSourceSection extends LitElement {
       ${this.enabled
         ? html`
             <div class="thresholds">
-              ${this._renderThresholdCell({
+              ${this._renderThresholdRow({
                 label: localize("heat_source.primary_delta", lang),
                 hint: localize("heat_source.primary_delta_hint", lang),
                 suffix: localize("heat_source.primary_delta_suffix", lang),
@@ -163,7 +155,7 @@ export class RsHeatSourceSection extends LitElement {
                 step: 0.1,
                 key: "heat_source_primary_delta",
               })}
-              ${this._renderThresholdCell({
+              ${this._renderThresholdRow({
                 label: localize("heat_source.outdoor_threshold", lang),
                 hint: localize("heat_source.outdoor_threshold_hint", lang),
                 suffix: localize("heat_source.outdoor_threshold_suffix", lang),
@@ -173,7 +165,7 @@ export class RsHeatSourceSection extends LitElement {
                 step: 1,
                 key: "heat_source_outdoor_threshold",
               })}
-              ${this._renderThresholdCell({
+              ${this._renderThresholdRow({
                 label: localize("heat_source.ac_min_outdoor", lang),
                 hint: localize("heat_source.ac_min_outdoor_hint", lang),
                 suffix: localize("heat_source.ac_min_outdoor_suffix", lang),
@@ -189,7 +181,7 @@ export class RsHeatSourceSection extends LitElement {
     `;
   }
 
-  private _renderThresholdCell(opts: {
+  private _renderThresholdRow(opts: {
     label: string;
     hint: string;
     suffix: string;
@@ -200,11 +192,9 @@ export class RsHeatSourceSection extends LitElement {
     key: string;
   }) {
     return html`
-      <div class="threshold-cell">
-        <div class="threshold-label">
-          <span>${opts.label}</span>
-          <rs-info-icon .text=${opts.hint}></rs-info-icon>
-        </div>
+      <div class="threshold-row">
+        <span class="threshold-label">${opts.label}</span>
+        <span class="threshold-hint">${opts.hint}</span>
         <ha-textfield
           .value=${String(opts.value)}
           .min=${String(opts.min)}
