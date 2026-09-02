@@ -73,6 +73,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
             "outdoor_temp": None,
             "outdoor_humidity": None,
             "vacation_active": False,
+            "heating_season": True,
             "vacation_temp": None,
             "vacation_until": None,
             "hidden_rooms": [],

@@ -21,6 +21,7 @@ from ..const import (
     CLIMATE_MODE_COOL_ONLY,
     CLIMATE_MODE_HEAT_ONLY,
     DEFAULT_COMFORT_WEIGHT,
+    DEFAULT_HEATING_SEASON,
     DEFAULT_OUTDOOR_COOLING_MIN,
     DEFAULT_OUTDOOR_HEATING_MAX,
     HEATING_BOOST_TARGET,
@@ -686,6 +687,7 @@ def get_can_heat_cool(
     acs_can_heat: bool = False,
     *,
     override_active: bool = False,
+    heating_season: bool = True,
 ) -> tuple[bool, bool]:
     """Determine whether heating/cooling are allowed for a room.
 
@@ -698,11 +700,13 @@ def get_can_heat_cool(
 
     When *override_active* is True, outdoor temperature gating is bypassed
     because the user has explicitly requested a specific target temperature.
+
+    When *heating_season* is False the water circuit is shut down for the
+    season, so TRVs cannot deliver heat; ACs that heat are unaffected.
     """
     climate_mode = room_config.get("climate_mode", "auto")
-    can_heat = climate_mode != CLIMATE_MODE_COOL_ONLY and (
-        bool(get_trv_eids(room_config.get("devices", []))) or acs_can_heat
-    )
+    trvs_can_heat = heating_season and bool(get_trv_eids(room_config.get("devices", [])))
+    can_heat = climate_mode != CLIMATE_MODE_COOL_ONLY and (trvs_can_heat or acs_can_heat)
     can_cool = climate_mode != CLIMATE_MODE_HEAT_ONLY and bool(get_ac_eids(room_config.get("devices", [])))
 
     if outdoor_temp is not None and not override_active:
@@ -804,6 +808,7 @@ class MPCController:
         self._fan_overrides: dict[str, str] = {}
 
         s = settings or {}
+        self.heating_season = s.get("heating_season", DEFAULT_HEATING_SEASON)
         self.outdoor_cooling_min = s.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
         self.outdoor_heating_max = s.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX)
 
@@ -1180,6 +1185,7 @@ class MPCController:
             self.outdoor_heating_max,
             acs_can_heat=check_acs_can_heat(self.hass, self.room_config),
             override_active=_override,
+            heating_season=self.heating_season,
         )
 
         if self.outdoor_temp is not None:
@@ -1342,6 +1348,10 @@ class MPCController:
         _cool_floors = ac_cool_floors or {}
         _forced_on = compressor_forced_on or set()
         _forced_off = compressor_forced_off or set()
+        if not self.heating_season:
+            # Out of season the water circuit is cold: idle every TRV instead
+            # of commanding heat it cannot deliver. ACs keep heating normally.
+            _forced_off = _forced_off | set(self.thermostats)
         # Per-device active fan mode resolved by the coordinator (auto
         # escalation). Takes precedence over the static active_fan_mode config.
         self._fan_overrides = fan_overrides or {}

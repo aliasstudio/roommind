@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_HEATING_SEASON,
     DEFAULT_OUTDOOR_HEATING_MAX,
     DOMAIN,
     HEATING_BOOST_TARGET,
@@ -577,6 +578,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
     async def _async_process_room(self, room: dict, settings: dict, outdoor_forecast: list[dict]) -> dict:
         """Process a single room: read sensor, evaluate schedule, apply control."""
         area_id = room.get("area_id", "unknown")
+        heating_season = settings.get("heating_season", DEFAULT_HEATING_SEASON)
 
         current_temp, current_temp_raw, current_humidity, has_external_sensor = self._read_room_sensors(room, area_id)
 
@@ -861,6 +863,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         heat_source_plan = None
         if (
             room.get("heat_source_orchestration", False)
+            and heating_season
             and mode == MODE_HEATING
             and has_external_sensor
             and get_trv_eids(room.get("devices", []))
@@ -1082,6 +1085,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     self.outdoor_temp_effective,
                     acs_can_heat=check_acs_can_heat(self.hass, room),
                     override_active=is_override_active(room),
+                    heating_season=heating_season,
                 )
                 _T_out = (
                     self.outdoor_temp_effective
@@ -1511,7 +1515,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         learning_disabled = settings.get("learning_disabled_rooms", [])
         learning_active = area_id not in learning_disabled and not is_turbo_active(room)
         if learning_active and current_temp_raw is not None and self.outdoor_temp_effective is not None:
-            can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=check_acs_can_heat(self.hass, room))
+            can_heat, can_cool = get_can_heat_cool(
+                room,
+                acs_can_heat=check_acs_can_heat(self.hass, room),
+                heating_season=settings.get("heating_season", DEFAULT_HEATING_SEASON),
+            )
             self._ekf_training.process(
                 area_id=area_id,
                 current_temp=current_temp_raw,

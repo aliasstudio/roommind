@@ -100,6 +100,16 @@ Best for:
 - pellet stoves
 - devices with their own thermostat logic that should stay in control internally
 
+## Heating Season
+
+A global toggle in `Settings`, next to `Vacation Mode`, and also exposed as `switch.roommind_heating_season` for automations.
+
+Turn it off when the building's water heating is shut down for the season. Radiator valves stop heating entirely: they are idled per their `When idle` action, valve-regulated heads are driven shut, and TRVs no longer count toward a room's heating capability. Rooms with no other heat source simply stop heating.
+
+Air conditioners that heat are deliberately left alone — in the off-season they are usually what covers the gap. In a room with both, heat source orchestration is suspended while the season is off, so the AC receives the full heating demand instead of a share split with a cold radiator.
+
+Cooling, dehumidification and mold prevention are unaffected. This is a hard gate, not a setback: unlike `Maximum outdoor temp for heating` it does not depend on the weather and is not bypassed by a manual override.
+
 ## Idle Behavior: Off, Fan Only, Setback
 
 `When idle` applies to `Climate Device` entries.

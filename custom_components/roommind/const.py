@@ -69,6 +69,7 @@ BANGBANG_HEAT_HYSTERESIS = 0.2  # °C below target → start heating (bang-bang 
 BANGBANG_COOL_HYSTERESIS = 0.2  # °C above target → start cooling (bang-bang fallback)
 DEFAULT_OUTDOOR_COOLING_MIN = 16  # Hard block: NEVER cool if outdoor < this
 DEFAULT_OUTDOOR_HEATING_MAX = 22  # Don't heat if outdoor > this
+DEFAULT_HEATING_SEASON = True  # False = central heating is off for the season; TRVs stop heating
 HEATING_BOOST_TARGET = 30  # Fallback TRV heating boost (used when entity max_temp unavailable)
 AC_HEATING_BOOST_TARGET = 30  # Fallback AC heating boost (used when entity max_temp unavailable)
 AC_COOLING_BOOST_TARGET = 16  # Fallback AC cooling boost (used when entity min_temp unavailable)

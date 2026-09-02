@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, VACATION_SENTINEL_UNTIL
+from .const import DEFAULT_HEATING_SEASON, DOMAIN, VACATION_SENTINEL_UNTIL
 from .coordinator import RoomMindCoordinator
 
 
@@ -33,8 +33,11 @@ async def async_setup_entry(
     store = hass.data[DOMAIN]["store"]
     coordinator.async_add_switch_entities = async_add_entities
 
-    # Global vacation switch (always created)
-    entities: list[SwitchEntity] = [RoomMindVacationSwitch(coordinator)]
+    # Global switches (always created)
+    entities: list[SwitchEntity] = [
+        RoomMindVacationSwitch(coordinator),
+        RoomMindHeatingSeasonSwitch(coordinator),
+    ]
 
     rooms = store.get_rooms()
     for area_id, room in rooms.items():
@@ -146,3 +149,37 @@ class RoomMindVacationSwitch(CoordinatorEntity, SwitchEntity):
         store = self.coordinator.hass.data[DOMAIN]["store"]
         await store.async_save_settings({"vacation_until": None})
         await self.coordinator.async_request_refresh()
+
+
+class RoomMindHeatingSeasonSwitch(CoordinatorEntity, SwitchEntity):
+    """Switch to toggle the heating season globally.
+
+    Off means the water circuit is shut down for the season, so TRVs stop
+    heating entirely. ACs that heat are unaffected.
+    """
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: RoomMindCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_heating_season"
+        self._attr_name = "Heating Season"
+        self._attr_icon = "mdi:radiator"
+        self.entity_id = f"switch.{DOMAIN}_heating_season"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True while the heating season is active."""
+        store = self.coordinator.hass.data[DOMAIN]["store"]
+        return bool(store.get_settings().get("heating_season", DEFAULT_HEATING_SEASON))
+
+    async def _async_set(self, active: bool) -> None:
+        store = self.coordinator.hass.data[DOMAIN]["store"]
+        await store.async_save_settings({"heating_season": active})
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_set(False)

@@ -20,6 +20,7 @@ import "./settings/rs-settings-general";
 import "./settings/rs-settings-sensors";
 import "./settings/rs-settings-control";
 import "./settings/rs-settings-presence";
+import "./settings/rs-settings-heating-season";
 import "./settings/rs-settings-vacation";
 import "./settings/rs-settings-valve";
 import "./settings/rs-settings-compressor";
@@ -46,6 +47,7 @@ export class RsSettings extends LitElement {
   @state() private _weatherEntity = "";
   @state() private _outdoorUnavailableNotify = true;
   @state() private _predictionEnabled = true;
+  @state() private _heatingSeason = true;
   @state() private _vacationActive = false;
   @state() private _vacationTemp = 15;
   @state() private _vacationUntil = "";
@@ -103,6 +105,7 @@ export class RsSettings extends LitElement {
       this._weatherEntity = s.weather_entity ?? "";
       this._outdoorUnavailableNotify = s.outdoor_unavailable_notify ?? true;
       this._predictionEnabled = s.prediction_enabled ?? true;
+      this._heatingSeason = s.heating_season ?? true;
       const vUntil = s.vacation_until;
       this._vacationActive = !!(vUntil && vUntil > Date.now() / 1000);
       this._vacationTemp = s.vacation_temp ?? 15;
@@ -207,6 +210,18 @@ export class RsSettings extends LitElement {
           .presenceClearsOverride=${this._presenceClearsOverride}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-presence>
+      </rs-settings-panel>
+
+      <rs-settings-panel
+        icon="mdi:radiator"
+        .heading=${localize("heating_season.title", l)}
+        .intro=${localize("settings.intro.heating_season", l)}
+      >
+        <rs-settings-heating-season
+          .hass=${this.hass}
+          .heatingSeason=${this._heatingSeason}
+          @setting-changed=${this._onSettingChanged}
+        ></rs-settings-heating-season>
       </rs-settings-panel>
 
       <rs-settings-panel
@@ -355,6 +370,7 @@ export class RsSettings extends LitElement {
         weather_entity: this._weatherEntity,
         outdoor_unavailable_notify: this._outdoorUnavailableNotify,
         prediction_enabled: this._predictionEnabled,
+        heating_season: this._heatingSeason,
         vacation_temp: this._vacationTemp,
         vacation_until: this._vacationActive
           ? this._vacationUntil
