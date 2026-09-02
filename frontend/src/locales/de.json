@@ -569,8 +569,8 @@
   "heat_source.outdoor_threshold": "Außentemperatur-Umschaltpunkt",
   "heat_source.outdoor_threshold_hint": "Über dieser Außentemperatur die AC/Wärmepumpe bevorzugen (höhere Effizienz). Darunter den Gas-Boiler/Heizkörper.",
   "heat_source.outdoor_threshold_suffix": "°C",
-  "heat_source.ac_min_outdoor": "Min. Außentemp. für AC-Heizen",
-  "heat_source.ac_min_outdoor_hint": "AC-Heizen unter dieser Temperatur komplett deaktivieren, um die Wärmepumpen-Hardware zu schützen.",
+  "heat_source.ac_min_outdoor": "Abschaltpunkt AC-Heizen",
+  "heat_source.ac_min_outdoor_hint": "Unter dieser Außentemperatur heizt das Klimagerät gar nicht mehr, was die Wärmepumpe schützt. Darunter heizt nur noch der Kessel/Heizkörper.",
   "heat_source.ac_min_outdoor_suffix": "°C",
   "heat_source.summary_disabled": "Intelligente Quellenwahl ist aus"
 }

@@ -569,8 +569,8 @@
   "heat_source.outdoor_threshold": "Outdoor preference switchover",
   "heat_source.outdoor_threshold_hint": "Above this outdoor temperature, prefer the AC/heat pump (higher efficiency). Below, prefer the gas boiler/radiator.",
   "heat_source.outdoor_threshold_suffix": "°C",
-  "heat_source.ac_min_outdoor": "Min. outdoor temp for AC heating",
-  "heat_source.ac_min_outdoor_hint": "Disable AC heating entirely below this temperature to protect the heat pump hardware.",
+  "heat_source.ac_min_outdoor": "AC heating cutoff",
+  "heat_source.ac_min_outdoor_hint": "Below this outdoor temperature the AC stops heating entirely, protecting the heat pump. Only the boiler/radiator heats below it.",
   "heat_source.ac_min_outdoor_suffix": "°C",
   "heat_source.summary_disabled": "Smart source selection is off"
 }
