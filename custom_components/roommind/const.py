@@ -174,7 +174,11 @@ COVER_POS_DEADBAND: int = 20  # min position change (%) to trigger motor movemen
 COVER_DAILY_LOOKAHEAD_H: float = 8.0  # hours ahead to search for daily solar peak (Tier 2)
 
 # Heat source orchestration — smart routing for rooms with multiple heating device types
-DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap to engage primary (boiler/radiator)
+HEAT_SOURCE_PRIMARY_TRV = "trv"  # radiator/boiler leads, AC supplements
+HEAT_SOURCE_PRIMARY_AC = "ac"  # heat pump leads, radiator supplements
+HEAT_SOURCE_PRIMARIES = (HEAT_SOURCE_PRIMARY_TRV, HEAT_SOURCE_PRIMARY_AC)
+DEFAULT_HEAT_SOURCE_PRIMARY = HEAT_SOURCE_PRIMARY_TRV
+DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap that engages both sources (× the multiplier below)
 DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD = 5.0  # °C outdoor: above = prefer AC, below = prefer boiler
 DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR = -15.0  # °C hard-disable AC heating below this
 HEAT_SOURCE_HYSTERESIS = 0.3  # °C hysteresis band to prevent oscillation

@@ -100,6 +100,20 @@ Best for:
 - pellet stoves
 - devices with their own thermostat logic that should stay in control internally
 
+## Heat Source Orchestration
+
+For rooms holding both a radiator TRV and an AC that can heat. `Lead source` picks which of the two carries the full heating demand; the other supplements it at a reduced share whenever both run.
+
+Put the source that is cheaper *per kWh of heat* in front. For a radiator that usually means the radiator — but not always: compare the heat tariff (price per Gcal ÷ 1163) against your electricity price divided by the heat pump's COP at the outdoor temperatures you actually see. Where heat is metered and electricity is cheap, the heat pump can win across its whole operating range, and the radiator becomes the expensive backup for the cold end.
+
+Which source runs is then decided in this order:
+
+1. Room more than `Combined heating threshold` × 2 below target → **both**, lead source at full power.
+2. Otherwise `Outdoor preference switchover` decides by outdoor temperature: above it the AC, below it the radiator. This is a device-type preference and does not depend on which one leads.
+3. Below `AC heating cutoff` the AC is removed entirely, in either role.
+
+Changing the lead source does not change steps 2 and 3 — it changes who gets full power when both run, and who is preferred when no outdoor temperature is available at all.
+
 ## Heating Season
 
 A global toggle in `Settings`, next to `Vacation Mode`, and also exposed as `switch.roommind_heating_season` for automations.
