@@ -98,37 +98,39 @@ export class RsScheduleEditor extends LitElement {
       }
 
       .temps {
-        display: flex;
-        gap: 6px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
         align-items: center;
         min-width: 0;
       }
-      .temps ha-textfield {
-        width: 96px;
+      .temps.single {
+        grid-template-columns: minmax(0, 1fr);
       }
 
+      /* Six controls on a 3-column grid fill exactly two rows, no ragged tail. */
       .advanced {
         grid-column: 1 / -1;
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
-        padding: 8px 2px 4px;
+        padding: 10px 0 4px;
         border-top: 1px dashed var(--divider-color, #ddd);
       }
       .field {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
         min-width: 0;
       }
-      .field label {
-        font-size: 11px;
-        color: var(--secondary-text-color);
+      /* Inner labels everywhere, so every control shares one baseline. */
+      ha-textfield,
+      ha-select {
+        width: 100%;
       }
-      .checkbox-field {
-        flex-direction: row;
+      .switch-field {
+        display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 10px;
+        font-size: 13px;
+        padding-left: 2px;
       }
 
       .overlap-hint {
@@ -137,12 +139,21 @@ export class RsScheduleEditor extends LitElement {
         margin-bottom: 6px;
       }
 
+      @media (max-width: 900px) {
+        .advanced {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
       @media (max-width: 600px) {
         .block {
           grid-template-columns: auto auto 1fr;
         }
         .temps {
           grid-column: 1 / -1;
+        }
+        .advanced {
+          grid-template-columns: minmax(0, 1fr);
         }
       }
     `,
@@ -225,7 +236,9 @@ export class RsScheduleEditor extends LitElement {
           @change=${(event: Event) =>
             this._patchBlock(day, index, { to: padTime(this._inputValue(event)) })}
         />
-        <div class="temps">${this._renderTemps(day, index, data)}</div>
+        <div class="temps ${this.climateMode === "auto" ? "" : "single"}">
+          ${this._renderTemps(day, index, data)}
+        </div>
         <ha-icon-button
           .path=${RsScheduleEditor.ICON_TUNE}
           .label=${localize("schedule.editor_advanced", language)}
@@ -294,8 +307,8 @@ export class RsScheduleEditor extends LitElement {
     return html`
       <div class="advanced">
         <div class="field">
-          <label>${localize("schedule.editor_idle_action", language)}</label>
           <ha-select
+            .label=${localize("schedule.editor_idle_action", language)}
             .value=${data.idle_action ?? ""}
             @selected=${(event: Event) =>
               this._patchData(day, index, {
@@ -323,7 +336,7 @@ export class RsScheduleEditor extends LitElement {
             (value) => this._patchData(day, index, { [field]: value }),
           ),
         )}
-        <div class="field checkbox-field">
+        <div class="field switch-field">
           <ha-switch
             .checked=${data.dehumidify !== false}
             @change=${(event: Event) => {
