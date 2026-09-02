@@ -246,3 +246,10 @@ def build_override_live(room: dict, suppressed: bool = False) -> dict:
         "override_until": room.get("override_until") if active else None,
         "override_suppressed": active and suppressed,
     }
+
+# Direct valve regulation (Sonoff TRVZB & friends): RoomMind writes the valve
+# opening degree itself instead of faking a proportional setpoint.
+DEFAULT_VALVE_MIN_OPENING = 10  # % — below this a TRVZB barely passes water
+DEFAULT_VALVE_MAX_OPENING = 100  # % — some heads cap below 100
+DEFAULT_VALVE_OPENING_THRESHOLD = 5  # % demand below which the valve is shut
+DEFAULT_VALVE_DEADBAND = 5  # % — smaller changes are not sent (battery/motor wear)
