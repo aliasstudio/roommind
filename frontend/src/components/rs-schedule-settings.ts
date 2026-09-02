@@ -1,6 +1,6 @@
 import { html, css, nothing } from "lit";
-import { customElement, property } from "lit/decorators.js";
-import type { ScheduleEntry, ClimateMode } from "../types";
+import { customElement, property, state } from "lit/decorators.js";
+import type { ScheduleBlockData, ScheduleBlocks, ScheduleEntry, ClimateMode } from "../types";
 import { localize } from "../utils/localize";
 import {
   formatTemp,
@@ -12,6 +12,8 @@ import {
 } from "../utils/temperature";
 import { RsScheduleBase } from "./shared/rs-schedule-base";
 import { inputStyles } from "../styles/input-styles";
+import { emptyBlocks, findActiveBlock, isInlineSchedule } from "../utils/schedule";
+import "./rs-schedule-editor";
 
 @customElement("rs-schedule-settings")
 export class RsScheduleSettings extends RsScheduleBase {
@@ -36,10 +38,35 @@ export class RsScheduleSettings extends RsScheduleBase {
   @property({ type: Number }) public ecoCool = 27.0;
   @property({ type: String }) public climateMode: ClimateMode = "auto";
 
+  /** Index of the inline schedule whose weekly editor is open, or -1. */
+  @state() private _editingBlocksIndex = -1;
+
   static styles = [
     RsScheduleBase.sharedStyles,
     inputStyles,
     css`
+      .blocks-editor {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin: 0 0 12px;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: var(--secondary-background-color, rgba(0, 0, 0, 0.03));
+      }
+
+      .add-inline-button {
+        font: inherit;
+        color: var(--primary-color);
+        background: none;
+        border: 1px dashed var(--primary-color);
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        margin-bottom: 12px;
+        width: 100%;
+      }
+
       .fallback-hint {
         font-size: 11px;
         color: var(--secondary-text-color);
@@ -150,11 +177,13 @@ export class RsScheduleSettings extends RsScheduleBase {
                       ? html`<span class="schedule-number">${index + 1}</span>`
                       : nothing}
                     <span class="schedule-status-dot"></span>
-                    <span
-                      class="schedule-name schedule-link"
-                      @click=${() => this._openEntityInfo(schedule.entity_id)}
-                      >${this._getFriendlyName(schedule.entity_id)}</span
-                    >
+                    ${isInlineSchedule(schedule)
+                      ? html`<span class="schedule-name">${this._getScheduleLabel(schedule)}</span>`
+                      : html`<span
+                          class="schedule-name schedule-link"
+                          @click=${() => this._openEntityInfo(schedule.entity_id!)}
+                          >${this._getScheduleLabel(schedule)}</span
+                        >`}
                     <span class="schedule-status">${this._getStatusText(index, state)}</span>
                   </div>
                 `;
@@ -215,10 +244,15 @@ export class RsScheduleSettings extends RsScheduleBase {
   private _renderEditMode() {
     const l = this.hass.language;
     const count = this.schedules.length;
-    const usedIds = new Set(this.schedules.map((s) => s.entity_id));
+    const usedIds = new Set(
+      this.schedules.map((schedule) => schedule.entity_id).filter((id): id is string => !!id),
+    );
 
     return html`
       ${this._renderScheduleList()}
+      <button class="add-inline-button" @click=${this._addInlineSchedule}>
+        ${localize("schedule.editor_add_inline", l)}
+      </button>
       ${this._renderAddRow(
         localize("schedule.select_schedule", l),
         this._getAvailableEntities(usedIds),
@@ -254,8 +288,19 @@ export class RsScheduleSettings extends RsScheduleBase {
             <div class="schedule-row ${state}">
               ${count >= 2 ? html`<span class="schedule-number">${index + 1}</span>` : nothing}
               <span class="schedule-status-dot"></span>
-              <span class="schedule-name">${this._getFriendlyName(schedule.entity_id)}</span>
+              <span class="schedule-name">${this._getScheduleLabel(schedule)}</span>
               <span class="schedule-status">${this._getStatusText(index, state)}</span>
+              ${isInlineSchedule(schedule)
+                ? html`
+                    <ha-icon-button
+                      .path=${RsScheduleSettings.ICON_EDIT}
+                      .label=${localize("schedule.editor_edit_blocks", l)}
+                      @click=${() =>
+                        (this._editingBlocksIndex =
+                          this._editingBlocksIndex === index ? -1 : index)}
+                    ></ha-icon-button>
+                  `
+                : nothing}
               ${this._renderScheduleControls(
                 index,
                 count,
@@ -263,6 +308,29 @@ export class RsScheduleSettings extends RsScheduleBase {
                 (i) => this._removeSchedule(i),
               )}
             </div>
+            ${this._editingBlocksIndex === index && isInlineSchedule(schedule)
+              ? html`
+                  <div class="blocks-editor">
+                    <ha-textfield
+                      .label=${localize("schedule.editor_name", l)}
+                      .value=${schedule.name ?? ""}
+                      @change=${(event: Event) =>
+                        this._patchSchedule(index, {
+                          name: (event.target as HTMLElement & { value: string }).value,
+                        })}
+                    ></ha-textfield>
+                    <rs-schedule-editor
+                      .hass=${this.hass}
+                      .blocks=${schedule.blocks ?? emptyBlocks()}
+                      .climateMode=${this.climateMode}
+                      @blocks-changed=${(event: CustomEvent<{ value: ScheduleBlocks }>) => {
+                        event.stopPropagation();
+                        this._patchSchedule(index, { blocks: event.detail.value });
+                      }}
+                    ></rs-schedule-editor>
+                  </div>
+                `
+              : nothing}
           `;
         })}
       </div>
@@ -392,44 +460,81 @@ export class RsScheduleSettings extends RsScheduleBase {
     if (state === "inactive") return localize("schedule.state_inactive", l);
 
     const schedule = this.schedules[index];
-    const entityState = this.hass?.states?.[schedule.entity_id];
+    if (isInlineSchedule(schedule)) {
+      return this._blockStatusText(findActiveBlock(schedule.blocks)?.data ?? null, l);
+    }
+    const entityState = this.hass?.states?.[schedule.entity_id!];
     if (!entityState) return localize("schedule.state_active", l);
 
-    const isOn = entityState.state === "on";
-    if (isOn) {
-      const attrs = entityState.attributes ?? {};
-      const blockTemp = attrs.temperature as number | undefined;
-      if (blockTemp != null) {
-        return localize("schedule.from_schedule", l, {
-          temp: String(blockTemp),
-          unit: tempUnit(this.hass),
-        });
-      }
-      const heatTemp = attrs.heat_temperature as number | undefined;
-      const coolTemp = attrs.cool_temperature as number | undefined;
-      if (heatTemp != null || coolTemp != null) {
-        return localize("schedule.from_schedule_split", l, {
-          heat: String(heatTemp ?? this.comfortHeat),
-          cool: String(coolTemp ?? this.comfortCool),
-          unit: tempUnit(this.hass),
-        });
-      }
-      return localize("schedule.fallback", l, {
-        temp: formatTemp(
-          this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
-          this.hass,
-        ),
+    return this._blockStatusText(
+      entityState.state === "on" ? (entityState.attributes ?? {}) : null,
+      l,
+    );
+  }
+
+  /** Render the active block's temperatures; `null` data means the schedule is off. */
+  private _blockStatusText(data: ScheduleBlockData | null, l: string): string {
+    if (data === null) {
+      return localize("schedule.eco_detail", l, {
+        temp: formatTemp(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass),
         unit: tempUnit(this.hass),
       });
     }
 
-    return localize("schedule.eco_detail", l, {
-      temp: formatTemp(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass),
+    if (data.temperature != null) {
+      return localize("schedule.from_schedule", l, {
+        temp: formatTemp(data.temperature, this.hass),
+        unit: tempUnit(this.hass),
+      });
+    }
+
+    if (data.heat_temperature != null || data.cool_temperature != null) {
+      return localize("schedule.from_schedule_split", l, {
+        heat: formatTemp(data.heat_temperature ?? this.comfortHeat, this.hass),
+        cool: formatTemp(data.cool_temperature ?? this.comfortCool, this.hass),
+        unit: tempUnit(this.hass),
+      });
+    }
+
+    return localize("schedule.fallback", l, {
+      temp: formatTemp(
+        this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
+        this.hass,
+      ),
       unit: tempUnit(this.hass),
     });
   }
 
+  private static readonly ICON_EDIT =
+    "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z";
+
   // ─── Schedule management ───────────────────────────────────────
+
+  private _getScheduleLabel(schedule: ScheduleEntry): string {
+    if (isInlineSchedule(schedule)) {
+      return schedule.name || localize("schedule.editor_untitled", this.hass.language);
+    }
+    return this._getFriendlyName(schedule.entity_id!);
+  }
+
+  private _addInlineSchedule() {
+    this._editingBlocksIndex = this.schedules.length;
+    this._emitSchedules([
+      ...this.schedules,
+      {
+        name: localize("schedule.editor_untitled", this.hass.language),
+        blocks: emptyBlocks(),
+      },
+    ]);
+  }
+
+  private _patchSchedule(index: number, patch: Partial<ScheduleEntry>) {
+    this._emitSchedules(
+      this.schedules.map((schedule, scheduleIndex) =>
+        scheduleIndex === index ? { ...schedule, ...patch } : schedule,
+      ),
+    );
+  }
 
   private _addSchedule(entityId: string) {
     this._emitSchedules([...this.schedules, { entity_id: entityId }]);

@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.roommind.utils.schedule_utils import WEEKDAYS
+
 from .conftest import (
     SAMPLE_ROOM,
     _create_coordinator,
@@ -732,3 +734,47 @@ class TestScheduleEntityUnavailableFallback:
         room_state = result["rooms"]["living_room_abc12345"]
         assert room_state["force_off"] is True
         assert room_state["mode"] == "idle"
+
+
+class TestInlineSchedule:
+    """Schedules edited in the panel carry their blocks in the room config."""
+
+    @staticmethod
+    def _room_with_inline_block(from_time: str, to_time: str, data: dict) -> dict:
+        return {
+            **SAMPLE_ROOM,
+            "schedules": [
+                {
+                    "name": "Panel schedule",
+                    "blocks": {day: [{"from": from_time, "to": to_time, "data": data}] for day in WEEKDAYS},
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_active_inline_block_drives_target(self, hass, mock_config_entry):
+        """An inline block covering 'now' sets the target without any schedule entity."""
+        room = self._room_with_inline_block("00:00:00", "23:59:59", {"temperature": 23.0})
+        store = _make_store_mock({"living_room_abc12345": room})
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["living_room_abc12345"]["target_temp"] == 23.0
+
+    @pytest.mark.asyncio
+    async def test_inline_schedule_without_active_block_uses_eco(self, hass, mock_config_entry):
+        """Outside every inline block the room falls back to eco, as when a schedule is off."""
+        room = self._room_with_inline_block("00:00:00", "00:00:01", {"temperature": 23.0})
+        store = _make_store_mock({"living_room_abc12345": room})
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["living_room_abc12345"]["target_temp"] == 17.0

@@ -653,16 +653,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Load schedule blocks once — used for both target temp resolution and MPC lookahead.
         from .utils.schedule_utils import (
-            get_active_schedule_entity,
             make_target_resolver,
-            read_schedule_blocks,
+            resolve_active_schedule_blocks,
         )
 
-        schedule_entity_id = get_active_schedule_entity(self.hass, room)
-        schedule_blocks = (
-            await read_schedule_blocks(self.hass, schedule_entity_id, cache=self._schedule_blocks_cache)
-            if schedule_entity_id
-            else None
+        schedule_blocks, schedule_entity_id = await resolve_active_schedule_blocks(
+            self.hass, room, cache=self._schedule_blocks_cache
         )
 
         # A schedule slot can turn dehumidification off (``dehumidify: false``),
@@ -1973,10 +1969,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # schedule_entity_id is pre-resolved by the caller (_async_process_room) to avoid
         # a second resolve_schedule_index() call that could diverge if selector state changes.
-        if not schedule_entity_id:
+        # Inline schedules have no entity: their blocks alone drive resolution.
+        if not schedule_entity_id and schedule_blocks is None:
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
 
-        state = self.hass.states.get(schedule_entity_id)
+        state = self.hass.states.get(schedule_entity_id) if schedule_entity_id else None
         state_unavailable = state is None or state.state in ("unavailable", "unknown")
 
         if state_unavailable:

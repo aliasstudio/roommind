@@ -95,8 +95,7 @@ async def _compute_target_forecast(
     """
     from ..utils.presence_utils import is_presence_away
     from ..utils.schedule_utils import (
-        get_active_schedule_entity,
-        read_schedule_blocks,
+        resolve_active_schedule_blocks,
         resolve_targets_at_time,
     )
     from ..utils.temp_utils import ha_temp_to_celsius
@@ -114,8 +113,7 @@ async def _compute_target_forecast(
 
     presence_away = not room.get("ignore_presence", False) and is_presence_away(hass, room, settings)
 
-    entity_id = get_active_schedule_entity(hass, room)
-    schedule_blocks = await read_schedule_blocks(hass, entity_id, cache=schedule_blocks_cache) if entity_id else None
+    schedule_blocks, _entity_id = await resolve_active_schedule_blocks(hass, room, cache=schedule_blocks_cache)
 
     _hass = hass
     converter = lambda v: ha_temp_to_celsius(_hass, v)  # noqa: E731
