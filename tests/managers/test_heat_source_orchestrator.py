@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 from custom_components.roommind.const import (
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
+    DEFAULT_HEAT_SOURCE_PRIMARY,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     HEAT_SOURCE_SECONDARY_POWER_SCALE,
     MODE_COOLING,
@@ -38,6 +39,7 @@ def _make_room(
     primary_delta: float = DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     outdoor_threshold: float = DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     ac_min_outdoor: float = DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
+    primary: str = DEFAULT_HEAT_SOURCE_PRIMARY,
 ) -> dict:
     trv_list = thermostats if thermostats is not None else ["climate.trv_1"]
     ac_list = acs if acs is not None else ["climate.ac_1"]
@@ -50,6 +52,7 @@ def _make_room(
         "acs": ac_list,
         "devices": devices,
         "heat_source_orchestration": orchestration,
+        "heat_source_primary": primary,
         "heat_source_primary_delta": primary_delta,
         "heat_source_outdoor_threshold": outdoor_threshold,
         "heat_source_ac_min_outdoor": ac_min_outdoor,
@@ -345,3 +348,54 @@ class TestEvaluateHeatSources:
 
         assert isinstance(result, HeatSourcePlan)
         assert result.active_sources == "primary"
+
+
+class TestConfigurablePrimarySource:
+    """The room decides which device type leads (``heat_source_primary``)."""
+
+    def test_both_puts_full_power_on_the_configured_lead(self):
+        """With the AC leading it takes the full fraction and the TRV supplements."""
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room(primary_delta=1.5, primary="ac")
+        # delta_t = 4.0°C -> both sources
+        result = evaluate_heat_sources(room, MODE_HEATING, 0.8, 17.0, 21.0, 10.0, "none", hass)
+
+        assert result.active_sources == "both"
+        ac_cmd = next(c for c in result.commands if c.device_type == "ac")
+        trv_cmd = next(c for c in result.commands if c.device_type == "thermostat")
+        assert ac_cmd.role == "primary"
+        assert ac_cmd.power_fraction == 0.8
+        assert trv_cmd.role == "secondary"
+        assert trv_cmd.power_fraction == round(0.8 * HEAT_SOURCE_SECONDARY_POWER_SCALE, 2)
+
+    def test_default_keeps_the_trv_leading(self):
+        hass = _make_hass(["heat", "cool"])
+        result = evaluate_heat_sources(_make_room(primary_delta=1.5), MODE_HEATING, 0.8, 17.0, 21.0, 10.0, "none", hass)
+
+        ac_cmd = next(c for c in result.commands if c.device_type == "ac")
+        trv_cmd = next(c for c in result.commands if c.device_type == "thermostat")
+        assert trv_cmd.role == "primary"
+        assert trv_cmd.power_fraction == 0.8
+        assert ac_cmd.role == "secondary"
+
+    def test_outdoor_preference_still_picks_by_device_type(self):
+        """Warm outside picks the AC, cold picks the radiator — whoever leads."""
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room(primary_delta=1.5, outdoor_threshold=5.0, primary="ac")
+
+        warm = evaluate_heat_sources(room, MODE_HEATING, 0.6, 20.5, 21.0, 10.0, "none", hass)
+        assert warm.active_sources == "primary"  # the AC, which now leads
+        assert next(c for c in warm.commands if c.active).device_type == "ac"
+
+        cold = evaluate_heat_sources(room, MODE_HEATING, 0.6, 20.5, 21.0, 0.0, "none", hass)
+        assert cold.active_sources == "secondary"  # the radiator
+        assert next(c for c in cold.commands if c.active).device_type == "thermostat"
+
+    def test_hysteresis_follows_the_device_type_that_ran(self):
+        """A previous AC run must widen the band the same way in either role."""
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room(primary_delta=1.5, outdoor_threshold=5.0, primary="ac")
+        # AC ran last (as "primary" here); 4.8°C is within the hysteresis band
+        # below the threshold, so the AC keeps it.
+        result = evaluate_heat_sources(room, MODE_HEATING, 0.6, 20.5, 21.0, 4.8, "primary", hass)
+        assert next(c for c in result.commands if c.active).device_type == "ac"

@@ -23,9 +23,11 @@ from .const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_HEAT_SOURCE_PRIMARY,
     DEFAULT_HEATING_SEASON,
     DEFAULT_OUTDOOR_HEATING_MAX,
     DOMAIN,
+    HEAT_SOURCE_PRIMARY_AC,
     HEATING_BOOST_TARGET,
     HISTORY_ROTATE_CYCLES,
     HISTORY_WRITE_CYCLES,
@@ -2252,6 +2254,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     room.get("devices", []),
                     member_set,
                     rs.get("active_heat_sources"),
+                    ac_is_primary=room.get("heat_source_primary", DEFAULT_HEAT_SOURCE_PRIMARY)
+                    == HEAT_SOURCE_PRIMARY_AC,
                 )
             ):
                 continue

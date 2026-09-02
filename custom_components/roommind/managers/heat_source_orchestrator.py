@@ -4,7 +4,10 @@ When a room has both thermostats (e.g. radiator TRVs connected to a gas boiler)
 and ACs with heating capability (heat pumps), this module decides which devices
 to activate based on temperature gap (delta-T) and outdoor temperature.
 
-Roles are fixed: thermostats are always primary, ACs are always secondary.
+Which device type leads is configurable per room (``heat_source_primary``):
+the primary source carries the full power fraction, the secondary supplements
+it at a reduced share when both run. Radiators lead by default; rooms where
+the heat pump is the cheaper source can put the AC in front instead.
 
 The orchestrator sits between the MPC optimizer output (abstract mode + power_fraction)
 and the device command layer (async_apply). It does NOT modify the thermal model or
@@ -21,9 +24,11 @@ from homeassistant.core import HomeAssistant
 from ..const import (
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
+    DEFAULT_HEAT_SOURCE_PRIMARY,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     HEAT_SOURCE_HYSTERESIS,
     HEAT_SOURCE_LARGE_GAP_MULTIPLIER,
+    HEAT_SOURCE_PRIMARY_AC,
     HEAT_SOURCE_SECONDARY_POWER_SCALE,
     MODE_HEATING,
 )
@@ -110,9 +115,14 @@ def evaluate_heat_sources(
 
     delta_t = target_temp - current_temp
 
-    # Fixed roles: thermostats = primary, ACs = secondary
-    primary_devices: list[tuple[str, str]] = [(eid, "thermostat") for eid in thermostats]
-    secondary_devices: list[tuple[str, str]] = [(eid, "ac") for eid in acs]
+    # Configurable roles: whichever type leads carries the full power fraction
+    ac_is_primary = room_config.get("heat_source_primary", DEFAULT_HEAT_SOURCE_PRIMARY) == HEAT_SOURCE_PRIMARY_AC
+    trv_devices: list[tuple[str, str]] = [(eid, "thermostat") for eid in thermostats]
+    ac_devices: list[tuple[str, str]] = [(eid, "ac") for eid in acs]
+    primary_devices, secondary_devices = (ac_devices, trv_devices) if ac_is_primary else (trv_devices, ac_devices)
+    # Which group the outdoor preference resolves to, now that either type can lead
+    ac_group = "primary" if ac_is_primary else "secondary"
+    trv_group = "secondary" if ac_is_primary else "primary"
 
     # Early exit: at or above target, no heating needed
     if delta_t <= 0:
@@ -168,10 +178,12 @@ def evaluate_heat_sources(
     # Weather-based preference with hysteresis (None when no outdoor data available)
     prefer_ac: bool | None
     if outdoor_temp is not None:
-        if previous_active_sources == "secondary":
+        # Keyed on which device type ran last, not on its role name — either
+        # type can be the primary one.
+        if previous_active_sources == ac_group:
             # AC was active: keep unless outdoor drops below threshold - hysteresis
             prefer_ac = outdoor_temp > outdoor_threshold - HEAT_SOURCE_HYSTERESIS
-        elif previous_active_sources == "primary":
+        elif previous_active_sources == trv_group:
             # Boiler was active: keep unless outdoor rises above threshold + hysteresis
             prefer_ac = outdoor_temp > outdoor_threshold + HEAT_SOURCE_HYSTERESIS
         else:
@@ -185,9 +197,9 @@ def evaluate_heat_sources(
     elif previous_active_sources == "both" and delta_t > primary_delta - HEAT_SOURCE_HYSTERESIS:
         active = "both"
     elif prefer_ac is True:
-        active = "secondary"
+        active = ac_group
     elif prefer_ac is False:
-        active = "primary"
+        active = trv_group
     else:
         # No outdoor data: delta-T heuristic (backward compatible)
         active = "primary" if delta_t >= primary_delta + HEAT_SOURCE_HYSTERESIS else "secondary"
@@ -213,12 +225,10 @@ def evaluate_heat_sources(
 
     if active == "both":
         reason_parts.append(f"large gap ({delta_t:.1f}°C)")
-    elif active == "primary":
+    elif active in ("primary", "secondary"):
         outdoor_str = f"{outdoor_temp}°C" if outdoor_temp is not None else "n/a"
-        reason_parts.append(f"boiler preferred ({delta_t:.1f}°C gap, outdoor {outdoor_str})")
-    elif active == "secondary":
-        outdoor_str = f"{outdoor_temp}°C" if outdoor_temp is not None else "n/a"
-        reason_parts.append(f"AC preferred ({delta_t:.1f}°C gap, outdoor {outdoor_str})")
+        lead = "AC" if active == ac_group else "boiler"
+        reason_parts.append(f"{lead} preferred ({delta_t:.1f}°C gap, outdoor {outdoor_str})")
 
     for eid, device_type in primary_devices:
         is_active = active in ("primary", "both")

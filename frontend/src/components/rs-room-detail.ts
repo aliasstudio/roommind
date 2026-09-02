@@ -11,6 +11,7 @@ import type {
   DeviceConfig,
   DeviceType,
   DeviceRole,
+  HeatSourcePrimary,
 } from "../types";
 import "./rs-hero-status";
 import "./rs-climate-mode-selector";
@@ -86,6 +87,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _valveProtectionExclude: Set<string> = new Set();
   @state() private _climateControlEnabled = true;
   @state() private _heatSourceOrchestration = false;
+  @state() private _heatSourcePrimary: HeatSourcePrimary = "trv";
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
   @state() private _heatSourceAcMinOutdoor = -15.0;
@@ -289,6 +291,7 @@ export class RsRoomDetail extends LitElement {
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
       this._climateControlEnabled = this.config.climate_control_enabled ?? true;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
+      this._heatSourcePrimary = this.config.heat_source_primary ?? "trv";
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
       this._heatSourceAcMinOutdoor = this.config.heat_source_ac_min_outdoor ?? -15.0;
@@ -329,6 +332,7 @@ export class RsRoomDetail extends LitElement {
       this._valveProtectionExclude = new Set();
       this._climateControlEnabled = true;
       this._heatSourceOrchestration = false;
+      this._heatSourcePrimary = "trv";
       this._heatSourcePrimaryDelta = 1.5;
       this._heatSourceOutdoorThreshold = 5.0;
       this._heatSourceAcMinOutdoor = -15.0;
@@ -595,6 +599,7 @@ export class RsRoomDetail extends LitElement {
                   .hass=${this.hass}
                   .editing=${false}
                   .enabled=${this._heatSourceOrchestration}
+                  .primarySource=${this._heatSourcePrimary}
                   .primaryDelta=${this._heatSourcePrimaryDelta}
                   .outdoorThreshold=${this._heatSourceOutdoorThreshold}
                   .acMinOutdoor=${this._heatSourceAcMinOutdoor}
@@ -858,6 +863,7 @@ export class RsRoomDetail extends LitElement {
             .hass=${this.hass}
             .editing=${true}
             .enabled=${this._heatSourceOrchestration}
+            .primarySource=${this._heatSourcePrimary}
             .primaryDelta=${this._heatSourcePrimaryDelta}
             .outdoorThreshold=${this._heatSourceOutdoorThreshold}
             .acMinOutdoor=${this._heatSourceAcMinOutdoor}
@@ -1041,6 +1047,7 @@ export class RsRoomDetail extends LitElement {
     const { key, value } = e.detail;
     e.stopPropagation();
     if (key === "heat_source_orchestration") this._heatSourceOrchestration = value as boolean;
+    else if (key === "heat_source_primary") this._heatSourcePrimary = value as HeatSourcePrimary;
     else if (key === "heat_source_primary_delta") this._heatSourcePrimaryDelta = value as number;
     else if (key === "heat_source_outdoor_threshold")
       this._heatSourceOutdoorThreshold = value as number;
@@ -1117,6 +1124,7 @@ export class RsRoomDetail extends LitElement {
         is_outdoor: this._isOutdoor,
         valve_protection_exclude: [...this._valveProtectionExclude],
         heat_source_orchestration: this._heatSourceOrchestration,
+        heat_source_primary: this._heatSourcePrimary,
         heat_source_primary_delta: this._heatSourcePrimaryDelta,
         heat_source_outdoor_threshold: this._heatSourceOutdoorThreshold,
         heat_source_ac_min_outdoor: this._heatSourceAcMinOutdoor,

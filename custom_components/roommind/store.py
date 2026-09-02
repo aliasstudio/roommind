@@ -15,6 +15,7 @@ from .const import (
     DEFAULT_ECO_HEAT,
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
+    DEFAULT_HEAT_SOURCE_PRIMARY,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     DOMAIN,
 )
@@ -267,6 +268,7 @@ class RoomMindStore:
             "is_outdoor": config.get("is_outdoor", False),
             "valve_protection_exclude": config.get("valve_protection_exclude", []),
             "heat_source_orchestration": config.get("heat_source_orchestration", False),
+            "heat_source_primary": config.get("heat_source_primary", DEFAULT_HEAT_SOURCE_PRIMARY),
             "heat_source_primary_delta": config.get("heat_source_primary_delta", DEFAULT_HEAT_SOURCE_PRIMARY_DELTA),
             "heat_source_outdoor_threshold": config.get(
                 "heat_source_outdoor_threshold", DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD

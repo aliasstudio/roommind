@@ -838,3 +838,20 @@ class TestDehumidifyTarget:
     def test_unknown_device_reads_as_none(self):
         devices = [{"entity_id": "climate.ac", "type": "ac", "dehumidify_target": "19"}]
         assert get_dehumidify_target(devices, "climate.other") is None
+
+
+class TestRoomContributesToGroupWithAcPrimary:
+    """Role -> device type mapping follows the room's heat_source_primary."""
+
+    TRV = {"entity_id": "climate.trv1", "type": "trv"}
+    AC = {"entity_id": "climate.ac1", "type": "ac"}
+
+    def test_primary_means_the_ac_when_it_leads(self):
+        devices = [self.TRV, self.AC]
+        assert room_contributes_to_group(devices, {"climate.ac1"}, "primary", ac_is_primary=True) is True
+        assert room_contributes_to_group(devices, {"climate.trv1"}, "primary", ac_is_primary=True) is False
+
+    def test_secondary_means_the_trv_when_the_ac_leads(self):
+        devices = [self.TRV, self.AC]
+        assert room_contributes_to_group(devices, {"climate.trv1"}, "secondary", ac_is_primary=True) is True
+        assert room_contributes_to_group(devices, {"climate.ac1"}, "secondary", ac_is_primary=True) is False

@@ -84,6 +84,8 @@ export interface DeviceConfig {
   valve_deadband?: number; // trv: smallest opening change worth sending (default 5)
 }
 
+export type HeatSourcePrimary = "trv" | "ac";
+
 export type ConflictResolution =
   | "heating_priority"
   | "cooling_priority"
@@ -148,6 +150,7 @@ export interface RoomConfig {
   is_outdoor?: boolean;
   valve_protection_exclude?: string[];
   heat_source_orchestration?: boolean;
+  heat_source_primary?: HeatSourcePrimary; // which device type leads; default "trv"
   heat_source_primary_delta?: number;
   heat_source_outdoor_threshold?: number;
   heat_source_ac_min_outdoor?: number;

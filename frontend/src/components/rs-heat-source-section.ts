@@ -1,6 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { HomeAssistant } from "../types";
+import type { HeatSourcePrimary, HomeAssistant } from "../types";
 import { localize } from "../utils/localize";
 import { inputStyles } from "../styles/input-styles";
 
@@ -8,6 +8,7 @@ import { inputStyles } from "../styles/input-styles";
 export class RsHeatSourceSection extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public enabled = false;
+  @property({ type: String }) public primarySource: HeatSourcePrimary = "trv";
   @property({ type: Number }) public primaryDelta = 1.5;
   @property({ type: Number }) public outdoorThreshold = 5.0;
   @property({ type: Number }) public acMinOutdoor = -15.0;
@@ -109,6 +110,11 @@ export class RsHeatSourceSection extends LitElement {
         width: 100%;
         max-width: 220px;
       }
+
+      .threshold-row ha-select {
+        width: 100%;
+        max-width: 320px;
+      }
     `,
   ];
 
@@ -122,6 +128,7 @@ export class RsHeatSourceSection extends LitElement {
         </div>`;
       }
       return html`<div class="summary">
+        ${localize(`heat_source.primary_${this.primarySource}`, lang)} ·
         ${localize("heat_source.primary_delta", lang)}:
         <strong>${this.primaryDelta}${localize("heat_source.primary_delta_suffix", lang)}</strong>
         · ${localize("heat_source.outdoor_threshold", lang)}:
@@ -145,6 +152,27 @@ export class RsHeatSourceSection extends LitElement {
       ${this.enabled
         ? html`
             <div class="thresholds">
+              <div class="threshold-row">
+                <span class="threshold-label">${localize("heat_source.primary", lang)}</span>
+                <span class="threshold-hint">${localize("heat_source.primary_hint", lang)}</span>
+                <ha-select
+                  .value=${this.primarySource}
+                  .options=${[
+                    { value: "trv", label: localize("heat_source.primary_trv", lang) },
+                    { value: "ac", label: localize("heat_source.primary_ac", lang) },
+                  ]}
+                  @selected=${this._onPrimarySourceChange}
+                  @closed=${(e: Event) => e.stopPropagation()}
+                  fixedMenuPosition
+                >
+                  <ha-list-item value="trv"
+                    >${localize("heat_source.primary_trv", lang)}</ha-list-item
+                  >
+                  <ha-list-item value="ac"
+                    >${localize("heat_source.primary_ac", lang)}</ha-list-item
+                  >
+                </ha-select>
+              </div>
               ${this._renderThresholdRow({
                 label: localize("heat_source.primary_delta", lang),
                 hint: localize("heat_source.primary_delta_hint", lang),
@@ -206,6 +234,13 @@ export class RsHeatSourceSection extends LitElement {
         ></ha-textfield>
       </div>
     `;
+  }
+
+  private _onPrimarySourceChange(e: Event) {
+    const value = (e.target as HTMLSelectElement).value;
+    if (value && value !== this.primarySource) {
+      this._emit("heat_source_primary", value);
+    }
   }
 
   private _onSwitchChange(e: Event) {
