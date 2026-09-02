@@ -393,6 +393,14 @@ export class RsRoomDetail extends LitElement {
         ></rs-hero-status>
 
         <div class="detail-grid">
+          <rs-toggle-card
+            icon="mdi:tree"
+            .label=${localize("room.outdoor_toggle", this.hass.language)}
+            .hint=${localize("room.outdoor_hint", this.hass.language)}
+            .checked=${this._isOutdoor}
+            @toggle-changed=${this._onOutdoorToggle}
+          ></rs-toggle-card>
+
           ${!this._isOutdoor
             ? html`
                 <rs-toggle-card
@@ -594,14 +602,6 @@ export class RsRoomDetail extends LitElement {
                 ></rs-heat-source-section>
               </rs-section-card>`
             : nothing}
-
-          <rs-toggle-card
-            icon="mdi:tree"
-            .label=${localize("room.outdoor_toggle", this.hass.language)}
-            .hint=${localize("room.outdoor_hint", this.hass.language)}
-            .checked=${this._isOutdoor}
-            @toggle-changed=${this._onOutdoorToggle}
-          ></rs-toggle-card>
         </div>
         ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
         ${this._renderEditDialog()}

@@ -169,6 +169,7 @@ export interface GlobalSettings {
   learning_disabled_rooms?: string[];
   hidden_rooms?: string[];
   prediction_enabled?: boolean;
+  heating_season?: boolean;
   vacation_temp?: number;
   vacation_until?: number | null;
   presence_enabled?: boolean;

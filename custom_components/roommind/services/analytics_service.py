@@ -18,6 +18,7 @@ from ..const import (
     DEFAULT_DEHUMIDIFY_STOP_THRESHOLD,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_HEATING_SEASON,
 )
 from ..control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
@@ -231,6 +232,7 @@ async def build_analytics_data(
                     room_config,
                     coordinator.outdoor_temp_effective,
                     acs_can_heat=check_acs_can_heat(hass, room_config),
+                    heating_season=settings.get("heating_season", DEFAULT_HEATING_SEASON),
                 )
                 T_out = (
                     coordinator.outdoor_temp_effective
