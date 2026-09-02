@@ -28,6 +28,7 @@ from .const import (
     DEFAULT_VALVE_OPENING_THRESHOLD,
     DOMAIN,
     HEAT_SOURCE_PRIMARIES,
+    IDLE_ACTIONS,
     OVERRIDE_TYPES,
     build_override_live,
     is_override_suppressed,
@@ -38,8 +39,62 @@ from .services.analytics_service import (
     _safe_float,  # noqa: F401 - re-exported for tests
     build_analytics_data,
 )
+from .utils.schedule_utils import WEEKDAYS
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_TIME_PATTERN = vol.Match(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
+
+_BLOCK_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Optional("temperature"): vol.Coerce(float),
+        vol.Optional("heat_temperature"): vol.Coerce(float),
+        vol.Optional("cool_temperature"): vol.Coerce(float),
+        vol.Optional("idle_action"): vol.In(IDLE_ACTIONS),
+        vol.Optional("idle_fan_mode"): str,
+        vol.Optional("fan_control"): str,
+        vol.Optional("fan_min_mode"): str,
+        vol.Optional("fan_max_mode"): str,
+        vol.Optional("dehumidify"): bool,
+    }
+)
+
+
+def _validate_block(block: dict) -> dict:
+    """Reject blocks whose end is not after their start."""
+    if str(block["to"]) <= str(block["from"]):
+        raise vol.Invalid("schedule block 'to' must be later than 'from'")
+    return block
+
+
+_BLOCK_SCHEMA = vol.All(
+    {
+        vol.Required("from"): _TIME_PATTERN,
+        vol.Required("to"): _TIME_PATTERN,
+        vol.Optional("data", default=dict): _BLOCK_DATA_SCHEMA,
+    },
+    _validate_block,
+)
+
+_INLINE_BLOCKS_SCHEMA = vol.Schema({vol.In(WEEKDAYS): [_BLOCK_SCHEMA]})
+
+
+def _validate_schedule(schedule: dict) -> dict:
+    """A schedule is either entity-backed or inline, never both or neither."""
+    if bool(schedule.get("entity_id")) == ("blocks" in schedule):
+        raise vol.Invalid("schedule needs exactly one of 'entity_id' or 'blocks'")
+    return schedule
+
+
+_SCHEDULE_SCHEMA = vol.All(
+    {
+        vol.Optional("entity_id"): str,
+        vol.Optional("name"): str,
+        vol.Optional("blocks"): _INLINE_BLOCKS_SCHEMA,
+    },
+    _validate_schedule,
+)
 
 
 def _validate_device_idle_action(device: dict) -> dict:
@@ -346,7 +401,7 @@ async def websocket_list_rooms(
                     vol.Required("type"): vol.In(["trv", "ac"]),
                     vol.Optional("role", default="auto"): vol.In(["primary", "secondary", "auto"]),
                     vol.Optional("heating_system_type", default=""): vol.In(["", "radiator", "underfloor"]),
-                    vol.Optional("idle_action", default="off"): vol.In(["off", "fan_only", "setback", "low"]),
+                    vol.Optional("idle_action", default="off"): vol.In(IDLE_ACTIONS),
                     vol.Optional("idle_fan_mode", default="low"): str,
                     vol.Optional("active_fan_mode", default=""): str,
                     vol.Optional("fan_control", default="off"): vol.In(["off", "fixed", "auto"]),
@@ -377,7 +432,7 @@ async def websocket_list_rooms(
         vol.Optional("humidity_sensor"): str,
         vol.Optional("occupancy_sensors"): [str],
         vol.Optional("climate_mode"): vol.In(CLIMATE_MODES),
-        vol.Optional("schedules"): [{vol.Required("entity_id"): str}],
+        vol.Optional("schedules"): [_SCHEDULE_SCHEMA],
         vol.Optional("schedule_selector_entity"): str,
         vol.Optional("window_sensors"): [str],
         vol.Optional("window_open_delay"): vol.Coerce(int),

@@ -1625,3 +1625,64 @@ class TestTimezoneAwareBlockResolution:
                 eco_cool=29.0,
             )
         assert result == TargetTemps(heat=24.0, cool=26.0)  # comfort
+
+
+# ─────────────────────────────────────────────────────────────────
+# Inline (UI-editable) schedules
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestInlineSchedules:
+    """Tests for schedules whose blocks live in the room config."""
+
+    @staticmethod
+    def _hass_without_selector():
+        hass = MagicMock()
+        hass.states.get.return_value = None
+        return hass
+
+    def test_normalize_blocks_fills_days_and_sorts(self):
+        from custom_components.roommind.utils.schedule_utils import WEEKDAYS, normalize_blocks
+
+        blocks = normalize_blocks(
+            {
+                "monday": [
+                    {"from": "18:00:00", "to": "22:00:00"},
+                    {"from": "06:00:00", "to": "09:00:00"},
+                ]
+            }
+        )
+
+        assert set(blocks) == set(WEEKDAYS)
+        assert [block["from"] for block in blocks["monday"]] == ["06:00:00", "18:00:00"]
+        assert blocks["sunday"] == []
+
+    @pytest.mark.asyncio
+    async def test_inline_blocks_resolve_without_entity(self):
+        from custom_components.roommind.utils.schedule_utils import resolve_active_schedule_blocks
+
+        room = {"schedules": [{"name": "Weekdays", "blocks": {"monday": [{"from": "06:00:00", "to": "09:00:00"}]}}]}
+
+        blocks, entity_id = await resolve_active_schedule_blocks(self._hass_without_selector(), room)
+
+        assert entity_id is None
+        assert blocks["monday"] == [{"from": "06:00:00", "to": "09:00:00"}]
+
+    @pytest.mark.asyncio
+    async def test_entity_backed_schedule_still_reads_service(self):
+        from custom_components.roommind.utils.schedule_utils import resolve_active_schedule_blocks
+
+        hass = self._hass_without_selector()
+        hass.services.async_call = AsyncMock(return_value={"schedule.weekday": {"monday": []}})
+        room = {"schedules": [{"entity_id": "schedule.weekday"}]}
+
+        blocks, entity_id = await resolve_active_schedule_blocks(hass, room)
+
+        assert entity_id == "schedule.weekday"
+        assert blocks == {"monday": []}
+
+    @pytest.mark.asyncio
+    async def test_no_schedules_resolves_to_nothing(self):
+        from custom_components.roommind.utils.schedule_utils import resolve_active_schedule_blocks
+
+        assert await resolve_active_schedule_blocks(self._hass_without_selector(), {"schedules": []}) == (None, None)

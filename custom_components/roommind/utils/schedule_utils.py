@@ -272,16 +272,66 @@ def resolve_schedule_index(
     return 0
 
 
+WEEKDAYS = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+
+
+def get_active_schedule(hass: HomeAssistant, room: dict) -> dict | None:
+    """Return the active schedule entry, or None when no schedule applies."""
+    schedules = room.get("schedules", [])
+    idx = resolve_schedule_index(hass, room)
+    if 0 <= idx < len(schedules):
+        return schedules[idx]
+    return None
+
+
 def get_active_schedule_entity(
     hass: HomeAssistant,
     room: dict,
 ) -> str | None:
-    """Return the entity_id of the currently active schedule, or None."""
-    schedules = room.get("schedules", [])
-    idx = resolve_schedule_index(hass, room)
-    if 0 <= idx < len(schedules):
-        return schedules[idx].get("entity_id", "") or None
-    return None
+    """Return the entity_id of the currently active schedule, or None.
+
+    Inline (UI-editable) schedules have no backing entity and return None.
+    """
+    schedule = get_active_schedule(hass, room)
+    return (schedule.get("entity_id", "") or None) if schedule else None
+
+
+async def resolve_active_schedule_blocks(
+    hass: HomeAssistant,
+    room: dict,
+    cache: dict[str, dict] | None = None,
+) -> tuple[dict | None, str | None]:
+    """Return (weekly blocks, entity_id) for the room's active schedule.
+
+    Inline schedules carry their blocks in the room config and resolve without
+    an entity; entity-backed ones are read through schedule.get_schedule.
+    """
+    schedule = get_active_schedule(hass, room)
+    if schedule is None:
+        return None, None
+    blocks = schedule.get("blocks")
+    if blocks is not None:
+        return normalize_blocks(blocks), None
+    entity_id = schedule.get("entity_id", "") or None
+    if entity_id is None:
+        return None, None
+    return await read_schedule_blocks(hass, entity_id, cache=cache), entity_id
+
+
+def normalize_blocks(blocks: dict) -> dict:
+    """Return weekly blocks with every weekday present and times sorted."""
+    return {
+        day: sorted(blocks.get(day) or [], key=lambda block: str(block.get("from", "")))
+        for day in WEEKDAYS
+    }
 
 
 async def read_schedule_blocks(

@@ -14,8 +14,45 @@ export interface NotificationTarget {
   notify_when: "always" | "home_only";
 }
 
+export const WEEKDAYS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+
+export type Weekday = (typeof WEEKDAYS)[number];
+
+export type IdleAction = "off" | "fan_only" | "setback" | "low";
+
+export interface ScheduleBlockData {
+  temperature?: number;
+  heat_temperature?: number;
+  cool_temperature?: number;
+  idle_action?: IdleAction;
+  idle_fan_mode?: string;
+  fan_control?: string;
+  fan_min_mode?: string;
+  fan_max_mode?: string;
+  dehumidify?: boolean;
+}
+
+export interface ScheduleBlock {
+  from: string;
+  to: string;
+  data?: ScheduleBlockData;
+}
+
+export type ScheduleBlocks = Record<Weekday, ScheduleBlock[]>;
+
+/** Either entity-backed (a HA schedule.* helper) or inline, edited in the panel. */
 export interface ScheduleEntry {
-  entity_id: string;
+  entity_id?: string;
+  name?: string;
+  blocks?: ScheduleBlocks;
 }
 
 export interface CoverScheduleEntry {

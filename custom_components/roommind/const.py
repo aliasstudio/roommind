@@ -18,6 +18,9 @@ CLIMATE_MODE_HEAT_ONLY = "heat_only"
 CLIMATE_MODE_COOL_ONLY = "cool_only"
 CLIMATE_MODES = [CLIMATE_MODE_AUTO, CLIMATE_MODE_HEAT_ONLY, CLIMATE_MODE_COOL_ONLY]
 
+# How a device behaves while idle; shared by device config and schedule blocks.
+IDLE_ACTIONS = ["off", "fan_only", "setback", "low"]
+
 # Override types
 OVERRIDE_BOOST = "boost"
 OVERRIDE_ECO = "eco"
