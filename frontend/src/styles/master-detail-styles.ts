@@ -188,9 +188,17 @@ export const masterDetailStyles = css`
   }
 
   .detail-field.with-info ha-select,
-  .detail-field.with-info ha-textfield {
+  .detail-field.with-info ha-textfield,
+  .detail-field.with-info ha-entity-picker {
     flex: 1;
     min-width: 0;
+  }
+
+  /* The info icon (16px glyph + 2px button padding) plus the row gap. Rows
+     without a hint reserve the same gutter so every control in a panel ends
+     on one right edge. */
+  .detail-field:not(.with-info) {
+    padding-right: 26px;
   }
 
   .detail-field.with-info rs-info-icon {
