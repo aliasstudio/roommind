@@ -40,6 +40,8 @@ type EditableSection = "schedule" | "devices" | "sensors" | "presence" | "covers
 @customElement("rs-room-detail")
 export class RsRoomDetail extends LitElement {
   @property({ attribute: false }) public area!: HassArea;
+  /** Every room's config, so a schedule can be copied from another room. */
+  @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
   @property({ attribute: false }) public config: RoomConfig | null = null;
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public presenceEnabled = false;
@@ -455,6 +457,8 @@ export class RsRoomDetail extends LitElement {
                     .ecoCool=${this._ecoCool}
                     .climateMode=${this._climateMode}
                     .devices=${this._devices}
+                    .rooms=${this.rooms}
+                    .areaId=${this.area.area_id}
                     .editing=${false}
                     @schedules-changed=${this._onSchedulesChanged}
                     @schedule-selector-changed=${this._onScheduleSelectorChanged}
@@ -692,6 +696,8 @@ export class RsRoomDetail extends LitElement {
             .ecoCool=${this._ecoCool}
             .climateMode=${this._climateMode}
             .devices=${this._devices}
+            .rooms=${this.rooms}
+            .areaId=${this.area.area_id}
             .editing=${true}
             @schedules-changed=${this._onSchedulesChanged}
             @schedule-selector-changed=${this._onScheduleSelectorChanged}

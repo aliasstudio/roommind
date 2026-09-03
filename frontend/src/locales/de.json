@@ -605,5 +605,6 @@
   "schedule.editor_import": "Blöcke nach RoomMind kopieren",
   "schedule.editor_import_failed": "Import fehlgeschlagen: {error}",
   "schedule.editor_idle_action_ac": "Leerlauf: Klimagerät",
-  "schedule.editor_idle_action_trv": "Leerlauf: Heizkörperventil"
+  "schedule.editor_idle_action_trv": "Leerlauf: Heizkörperventil",
+  "schedule.editor_copy_from_room": "Zeitplan aus anderem Raum kopieren"
 }
