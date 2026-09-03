@@ -214,16 +214,10 @@ export const masterDetailStyles = css`
   .detail-toggle-row {
     display: flex;
     align-items: flex-start;
-    /* No gap: the checkbox's own ripple padding already spaces it from the
-       label, and adding to it leaves the box stranded on the left. */
+    /* No gap and no negative margins on the checkbox: HA's ha-checkbox is a
+       Web Awesome control sized by --ha-checkbox-size (20px), not the old MDC
+       one padded out to a 40px ripple, so it needs no compensation. */
     padding: 8px 0;
-  }
-
-  .detail-toggle-row ha-checkbox {
-    /* MDC pads the 18px box out to a 40px ripple target (11px a side).
-       Cancel that on the left so the box lines up with the fields above. */
-    margin-top: -8px;
-    margin-left: -11px;
   }
 
   .detail-toggle-label {
