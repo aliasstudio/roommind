@@ -24,7 +24,11 @@ import {
 import { toCelsius, toDisplay, tempStep, tempUnit, tempRange } from "../utils/temperature";
 import { inputStyles } from "../styles/input-styles";
 
-const IDLE_ACTIONS: IdleAction[] = ["off", "fan_only", "setback", "low"];
+/** What each device type can actually do while idle. */
+const IDLE_ACTIONS_BY_TYPE = {
+  ac: ["off", "fan_only", "setback"],
+  trv: ["off", "low", "setback"],
+} as const satisfies Record<string, readonly IdleAction[]>;
 
 const FAN_CONTROL_MODES = ["off", "fixed", "auto"] as const;
 
@@ -178,6 +182,13 @@ export class RsScheduleEditor extends LitElement {
   private _tempsLayoutClass(data: ScheduleBlockData): string {
     if (this.climateMode !== "auto") return "single";
     return data.temperature != null ? "triple" : "";
+  }
+
+  /** Device types present in the room, so only relevant idle fields are shown. */
+  private get _roomDeviceTypes(): ("ac" | "trv")[] {
+    return (["ac", "trv"] as const).filter((deviceType) =>
+      this.devices.some((device) => device.type === deviceType),
+    );
   }
 
   /** Union of the fan modes the room's climate entities report. */
@@ -334,14 +345,16 @@ export class RsScheduleEditor extends LitElement {
 
     return html`
       <div class="advanced">
-        ${this._renderChoiceField(
-          localize("schedule.editor_idle_action", language),
-          data.idle_action,
-          IDLE_ACTIONS.map((action) => ({
-            value: action,
-            label: localize(`devices.idle_action_${action}`, language),
-          })),
-          (value) => this._patchData(day, index, { idle_action: value }),
+        ${this._roomDeviceTypes.map((deviceType) =>
+          this._renderChoiceField(
+            localize(`schedule.editor_idle_action_${deviceType}`, language),
+            data[`${deviceType}_idle_action`] ?? data.idle_action,
+            IDLE_ACTIONS_BY_TYPE[deviceType].map((action) => ({
+              value: action,
+              label: localize(`devices.idle_action_${action}`, language),
+            })),
+            (value) => this._patchIdleAction(day, index, deviceType, value),
+          ),
         )}
         ${this._renderFanModeField(
           localize("schedule.editor_idle_fan_mode", language),
@@ -472,6 +485,26 @@ export class RsScheduleEditor extends LitElement {
       blockIndex === index ? { ...block, ...patch } : block,
     );
     this._emit({ ...this.blocks, [day]: dayBlocks });
+  }
+
+  /**
+   * Writing one type's action pins the other type's too, resolving the shared
+   * `idle_action` fallback and dropping it, so a block never states idling in
+   * two places at once.
+   */
+  private _patchIdleAction(
+    day: Weekday,
+    index: number,
+    deviceType: "ac" | "trv",
+    value: IdleAction | undefined,
+  ): void {
+    const data = this.blocks[day]?.[index]?.data ?? {};
+    const other = deviceType === "ac" ? "trv" : "ac";
+    this._patchData(day, index, {
+      [`${deviceType}_idle_action`]: value,
+      [`${other}_idle_action`]: data[`${other}_idle_action`] ?? data.idle_action,
+      idle_action: undefined,
+    });
   }
 
   private _patchData(day: Weekday, index: number, patch: ScheduleBlockData): void {

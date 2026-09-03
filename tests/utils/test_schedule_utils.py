@@ -46,13 +46,51 @@ def test_resolve_schedule_idle_none_blocks():
 
 
 def test_resolve_schedule_idle_night_off():
-    assert resolve_schedule_idle(_IDLE_BLOCKS, _MON_NIGHT) == {"idle_action": "off"}
+    """A type-less idle_action still covers both device types."""
+    assert resolve_schedule_idle(_IDLE_BLOCKS, _MON_NIGHT) == {
+        "ac": {"idle_action": "off"},
+        "trv": {"idle_action": "off"},
+    }
 
 
 def test_resolve_schedule_idle_day_fan_only_with_fan():
     assert resolve_schedule_idle(_IDLE_BLOCKS, _MON_DAY) == {
-        "idle_action": "fan_only",
-        "idle_fan_mode": "Low",
+        "ac": {"idle_action": "fan_only", "idle_fan_mode": "Low"},
+        "trv": {"idle_action": "fan_only", "idle_fan_mode": "Low"},
+    }
+
+
+def test_resolve_schedule_idle_per_type_actions():
+    """Each device type can idle differently within the same block."""
+    blocks = {
+        "monday": [
+            {
+                "from": "00:00:00",
+                "to": "23:59:59",
+                "data": {"ac_idle_action": "off", "trv_idle_action": "low"},
+            }
+        ]
+    }
+    assert resolve_schedule_idle(blocks, _MON_DAY) == {
+        "ac": {"idle_action": "off"},
+        "trv": {"idle_action": "low"},
+    }
+
+
+def test_resolve_schedule_idle_per_type_overrides_shared():
+    """A type-specific action wins over the type-less fallback."""
+    blocks = {
+        "monday": [
+            {
+                "from": "00:00:00",
+                "to": "23:59:59",
+                "data": {"idle_action": "off", "trv_idle_action": "low"},
+            }
+        ]
+    }
+    assert resolve_schedule_idle(blocks, _MON_DAY) == {
+        "ac": {"idle_action": "off"},
+        "trv": {"idle_action": "low"},
     }
 
 

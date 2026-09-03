@@ -409,24 +409,24 @@ _IDLE_ACTION_APPLICABLE: dict[str, set[str]] = {
 }
 
 
-def apply_idle_override(devices: list[dict], override: dict[str, str] | None) -> list[dict]:
-    """Return a copy of *devices* with a schedule idle override applied.
+def apply_idle_override(devices: list[dict], overrides: dict[str, dict[str, str]] | None) -> list[dict]:
+    """Return a copy of *devices* with per-device-type idle overrides applied.
 
-    The override (``{"idle_action": ..., "idle_fan_mode"?: ...}``) replaces the
-    configured idle behavior only for devices where the action is applicable to
-    their type; other devices are copied through unchanged. When *override* is
-    None or empty the original list is returned (no copy), so the common path
-    stays allocation-free.
+    *overrides* maps a device type to ``{"idle_action": ..., "idle_fan_mode"?: ...}``.
+    A device keeps its configured behavior when its type has no override or the
+    action does not apply to it. When *overrides* is None or empty the original
+    list is returned (no copy), so the common path stays allocation-free.
     """
-    if not override or not override.get("idle_action"):
+    if not overrides:
         return devices
-    action = override["idle_action"]
-    fan = override.get("idle_fan_mode")
     result: list[dict] = []
     for dev in devices:
-        applicable = _IDLE_ACTION_APPLICABLE.get(dev.get("type", ""), set())
-        if action in applicable:
+        device_type = dev.get("type", "")
+        override = overrides.get(device_type) or {}
+        action = override.get("idle_action")
+        if action and action in _IDLE_ACTION_APPLICABLE.get(device_type, set()):
             new_dev = {**dev, "idle_action": action}
+            fan = override.get("idle_fan_mode")
             if fan is not None and action == IDLE_ACTION_FAN_ONLY:
                 new_dev["idle_fan_mode"] = fan
             result.append(new_dev)

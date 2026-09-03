@@ -65,6 +65,10 @@ _BLOCK_DATA_SCHEMA = vol.Schema(
         vol.Optional("heat_temperature"): vol.Coerce(float),
         vol.Optional("cool_temperature"): vol.Coerce(float),
         vol.Optional("idle_action"): vol.In(IDLE_ACTIONS),
+        # Per-type actions accept only what applies to that device type: a TRV
+        # cannot idle on the fan, and "low" would make an AC cool to its minimum.
+        vol.Optional("ac_idle_action"): vol.In(["off", "fan_only", "setback"]),
+        vol.Optional("trv_idle_action"): vol.In(["off", "low", "setback"]),
         vol.Optional("idle_fan_mode"): str,
         vol.Optional("fan_control"): str,
         vol.Optional("fan_min_mode"): str,
