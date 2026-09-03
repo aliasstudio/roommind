@@ -33,6 +33,8 @@ DEFAULT_IDLE_SETBACK_OFFSET = 2.0
 
 SETPOINT_MODE_PROPORTIONAL = "proportional"
 SETPOINT_MODE_DIRECT = "direct"
+SETPOINT_MODE_VALVE = "valve"  # TRV only: RoomMind writes the valve opening degree itself
+SETPOINT_MODES = (SETPOINT_MODE_PROPORTIONAL, SETPOINT_MODE_DIRECT, SETPOINT_MODE_VALVE)
 
 # Fan-speed control strategy while a device is actively heating/cooling.
 FAN_CONTROL_OFF = "off"  # leave fan to the device/firmware (legacy default)

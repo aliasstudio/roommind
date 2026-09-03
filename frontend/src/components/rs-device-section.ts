@@ -394,7 +394,10 @@ export class RsDeviceSection extends LitElement {
       device?.idle_action === "fan_only" ||
       device?.idle_action === "setback" ||
       device?.idle_action === "low";
-    const showDirectBadge = device?.setpoint_mode === "direct" && !!this.selectedTempSensor;
+    const setpointBadge =
+      device?.setpoint_mode && device.setpoint_mode !== "proportional" && !!this.selectedTempSensor
+        ? device.setpoint_mode
+        : "";
 
     return html`
       <div class="view-row">
@@ -413,9 +416,9 @@ export class RsDeviceSection extends LitElement {
                   : localize("devices.idle_action_setback", this.hass.language)}
             </span>`
           : nothing}
-        ${showDirectBadge
+        ${setpointBadge
           ? html`<span class="valve-exclude-badge">
-              ${localize("devices.setpoint_mode_direct", this.hass.language)}
+              ${localize(`devices.setpoint_mode_${setpointBadge}`, this.hass.language)}
             </span>`
           : nothing}
         ${showExcludeBadge
@@ -603,9 +606,14 @@ export class RsDeviceSection extends LitElement {
                   )}</span
                 >`
               : nothing}
-            ${device?.setpoint_mode === "direct" && this.selectedTempSensor
+            ${device?.setpoint_mode &&
+            device.setpoint_mode !== "proportional" &&
+            this.selectedTempSensor
               ? html`<span class="meta-pill"
-                  >${localize("devices.setpoint_mode_direct", this.hass.language)}</span
+                  >${localize(
+                    `devices.setpoint_mode_${device.setpoint_mode}`,
+                    this.hass.language,
+                  )}</span
                 >`
               : nothing}
           </div>
@@ -883,7 +891,51 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
-      ${isThermostat && this.selectedTempSensor
+      ${this.selectedTempSensor
+        ? html`
+            <div class="detail-field with-info">
+              <ha-select
+                .label=${localize("devices.setpoint_mode", lang)}
+                .value=${device.setpoint_mode ?? "proportional"}
+                .options=${[
+                  {
+                    value: "proportional",
+                    label: localize("devices.setpoint_mode_proportional", lang),
+                  },
+                  {
+                    value: "direct",
+                    label: localize("devices.setpoint_mode_direct", lang),
+                  },
+                  ...(isThermostat
+                    ? [
+                        {
+                          value: "valve",
+                          label: localize("devices.setpoint_mode_valve", lang),
+                        },
+                      ]
+                    : []),
+                ]}
+                @selected=${(e: Event) => this._onSetpointModeChange(entityId, getSelectValue(e)!)}
+                @closed=${(e: Event) => e.stopPropagation()}
+                fixedMenuPosition
+              >
+                <ha-list-item value="proportional"
+                  >${localize("devices.setpoint_mode_proportional", lang)}</ha-list-item
+                >
+                <ha-list-item value="direct"
+                  >${localize("devices.setpoint_mode_direct", lang)}</ha-list-item
+                >
+                ${isThermostat
+                  ? html`<ha-list-item value="valve"
+                      >${localize("devices.setpoint_mode_valve", lang)}</ha-list-item
+                    >`
+                  : nothing}
+              </ha-select>
+              <rs-info-icon .text=${localize("devices.setpoint_mode_hint", lang)}></rs-info-icon>
+            </div>
+          `
+        : nothing}
+      ${isThermostat && this.selectedTempSensor && device.setpoint_mode === "valve"
         ? html`
             <div class="detail-field with-info">
               <ha-entity-picker
@@ -972,37 +1024,6 @@ export class RsDeviceSection extends LitElement {
                   </div>
                 `
               : nothing}
-          `
-        : nothing}
-      ${this.selectedTempSensor
-        ? html`
-            <div class="detail-field with-info">
-              <ha-select
-                .label=${localize("devices.setpoint_mode", lang)}
-                .value=${device.setpoint_mode ?? "proportional"}
-                .options=${[
-                  {
-                    value: "proportional",
-                    label: localize("devices.setpoint_mode_proportional", lang),
-                  },
-                  {
-                    value: "direct",
-                    label: localize("devices.setpoint_mode_direct", lang),
-                  },
-                ]}
-                @selected=${(e: Event) => this._onSetpointModeChange(entityId, getSelectValue(e)!)}
-                @closed=${(e: Event) => e.stopPropagation()}
-                fixedMenuPosition
-              >
-                <ha-list-item value="proportional"
-                  >${localize("devices.setpoint_mode_proportional", lang)}</ha-list-item
-                >
-                <ha-list-item value="direct"
-                  >${localize("devices.setpoint_mode_direct", lang)}</ha-list-item
-                >
-              </ha-select>
-              <rs-info-icon .text=${localize("devices.setpoint_mode_hint", lang)}></rs-info-icon>
-            </div>
           `
         : nothing}
       ${isAc &&
@@ -1196,7 +1217,9 @@ export class RsDeviceSection extends LitElement {
 
   private _onSetpointModeChange(entityId: string, mode: string): void {
     const newDevices = this.devices.map((d) =>
-      d.entity_id === entityId ? { ...d, setpoint_mode: mode as "proportional" | "direct" } : d,
+      d.entity_id === entityId
+        ? { ...d, setpoint_mode: mode as "proportional" | "direct" | "valve" }
+        : d,
     );
     this._fireDeviceChanged(newDevices);
   }
