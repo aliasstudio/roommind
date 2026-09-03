@@ -28,11 +28,17 @@ export type Weekday = (typeof WEEKDAYS)[number];
 
 export type IdleAction = "off" | "fan_only" | "setback" | "low";
 
+export type AcIdleAction = "off" | "fan_only" | "setback";
+export type TrvIdleAction = "off" | "low" | "setback";
+
 export interface ScheduleBlockData {
   temperature?: number;
   heat_temperature?: number;
   cool_temperature?: number;
+  /** Type-less fallback, kept for schedules written before the per-type split. */
   idle_action?: IdleAction;
+  ac_idle_action?: AcIdleAction;
+  trv_idle_action?: TrvIdleAction;
   idle_fan_mode?: string;
   fan_control?: string;
   fan_min_mode?: string;

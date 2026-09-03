@@ -603,5 +603,7 @@
   "schedule.editor_dehumidify": "Entfeuchten erlauben",
   "schedule.editor_inherit": "Übernehmen",
   "schedule.editor_import": "Blöcke nach RoomMind kopieren",
-  "schedule.editor_import_failed": "Import fehlgeschlagen: {error}"
+  "schedule.editor_import_failed": "Import fehlgeschlagen: {error}",
+  "schedule.editor_idle_action_ac": "Leerlauf: Klimagerät",
+  "schedule.editor_idle_action_trv": "Leerlauf: Heizkörperventil"
 }

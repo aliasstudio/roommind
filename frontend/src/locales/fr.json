@@ -603,5 +603,7 @@
   "schedule.editor_dehumidify": "Autoriser la déshumidification",
   "schedule.editor_inherit": "Hériter",
   "schedule.editor_import": "Copier les plages dans RoomMind",
-  "schedule.editor_import_failed": "Échec de l'import : {error}"
+  "schedule.editor_import_failed": "Échec de l'import : {error}",
+  "schedule.editor_idle_action_ac": "Repos : climatiseur",
+  "schedule.editor_idle_action_trv": "Repos : vanne de radiateur"
 }

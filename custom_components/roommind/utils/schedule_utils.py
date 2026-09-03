@@ -19,6 +19,7 @@ from ..const import (
     DEFAULT_ECO_HEAT,
     TargetTemps,
 )
+from .device_utils import DEVICE_TYPE_AC, DEVICE_TYPE_TRV
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -164,28 +165,35 @@ def resolve_targets_at_time(
     return TargetTemps(heat=eco_heat, cool=eco_cool)
 
 
-def resolve_schedule_idle(schedule_blocks: dict | None, ts: float) -> dict[str, str] | None:
-    """Return idle-action overrides from the active schedule block, or None.
+def resolve_schedule_idle(schedule_blocks: dict | None, ts: float) -> dict[str, dict[str, str]] | None:
+    """Return per-device-type idle overrides from the active schedule block.
 
-    Lets a schedule slot dictate how devices idle (e.g. fully ``off`` overnight
-    for silence, ``fan_only`` during the day). Reads the ``idle_action`` and
-    optional ``idle_fan_mode`` keys from the active block's ``data``. Returns
-    None when no block is active or no idle keys are present, so the per-device
-    configured idle behavior is used unchanged.
+    Lets a schedule slot dictate how each device type idles, independently: an
+    AC can go fully ``off`` overnight for silence while a radiator valve only
+    drops to ``low``, since a TRV that hibernates in off mode loses later
+    commands. Reads ``ac_idle_action`` / ``trv_idle_action``, falling back to
+    the type-less ``idle_action`` so schedules written before the split keep
+    working. Returns None when the active block says nothing about idling, so
+    the per-device configured behavior is used unchanged.
     """
     if schedule_blocks is None:
         return None
     data = find_active_block(schedule_blocks, ts)
     if not data:
         return None
-    action = data.get("idle_action")
-    if not action:
-        return None
-    override: dict[str, str] = {"idle_action": str(action)}
+
+    shared_action = data.get("idle_action")
     fan = data.get("idle_fan_mode")
-    if fan is not None:
-        override["idle_fan_mode"] = str(fan)
-    return override
+    overrides: dict[str, dict[str, str]] = {}
+    for device_type in (DEVICE_TYPE_AC, DEVICE_TYPE_TRV):
+        action = data.get(f"{device_type}_idle_action") or shared_action
+        if not action:
+            continue
+        override = {"idle_action": str(action)}
+        if fan is not None:
+            override["idle_fan_mode"] = str(fan)
+        overrides[device_type] = override
+    return overrides or None
 
 
 def resolve_schedule_fan(schedule_blocks: dict | None, ts: float) -> dict[str, str] | None:
