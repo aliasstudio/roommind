@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import voluptuous as vol
 
 from custom_components.roommind.const import DEFAULT_TURBO_COOL, DOMAIN
 from custom_components.roommind.websocket_api import (
@@ -2928,3 +2929,41 @@ async def test_import_schedule_reports_unreadable_helper(ws_hass, connection):
 
     connection.send_error.assert_called_once()
     assert connection.send_error.call_args[0][1] == "schedule_unavailable"
+
+
+def test_save_room_schema_canonicalizes_fractional_block_end():
+    """HA's 23:59:59.999999 end-of-day passes validation and is stored as HH:MM:SS."""
+    from custom_components.roommind.websocket_api import websocket_save_room
+
+    validated = websocket_save_room._ws_schema(
+        {
+            "id": 93,
+            "type": "roommind/rooms/save",
+            "area_id": "bedroom",
+            "schedules": [
+                {
+                    "name": "Imported",
+                    "blocks": {"monday": [{"from": "23:00", "to": "23:59:59.999999"}]},
+                }
+            ],
+        }
+    )
+
+    block = validated["schedules"][0]["blocks"]["monday"][0]
+    assert block["from"] == "23:00:00"
+    assert block["to"] == "23:59:59"
+
+
+def test_save_room_schema_rejects_impossible_time():
+    """A malformed time is still refused rather than silently coerced."""
+    from custom_components.roommind.websocket_api import websocket_save_room
+
+    with pytest.raises(vol.Invalid):
+        websocket_save_room._ws_schema(
+            {
+                "id": 94,
+                "type": "roommind/rooms/save",
+                "area_id": "bedroom",
+                "schedules": [{"name": "Bad", "blocks": {"monday": [{"from": "25:00", "to": "26:00"}]}}],
+            }
+        )

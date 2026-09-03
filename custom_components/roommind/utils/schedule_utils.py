@@ -326,10 +326,34 @@ async def resolve_active_schedule_blocks(
     return await read_schedule_blocks(hass, entity_id, cache=cache), entity_id
 
 
+def normalize_time(value: Any) -> str:
+    """Return ``HH:MM:SS`` for a time object or any ``HH:MM[:SS[.ffffff]]`` string.
+
+    HA renders an end-of-day ``24:00:00`` as ``23:59:59.999999``; fractional
+    seconds are truncated so the stored strings stay parseable.
+    """
+    if hasattr(value, "hour"):
+        return f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"
+    hours, _, rest = str(value).partition(":")
+    minutes, _, seconds = rest.partition(":")
+    seconds = seconds.partition(".")[0]
+    return f"{int(hours):02d}:{int(minutes or 0):02d}:{int(seconds or 0):02d}"
+
+
 def normalize_blocks(blocks: dict) -> dict:
-    """Return weekly blocks with every weekday present and times sorted."""
+    """Return weekly blocks with every weekday present, times canonical and sorted."""
     return {
-        day: sorted(blocks.get(day) or [], key=lambda block: str(block.get("from", "")))
+        day: sorted(
+            (
+                {
+                    **block,
+                    "from": normalize_time(block.get("from", "00:00:00")),
+                    "to": normalize_time(block.get("to", "00:00:00")),
+                }
+                for block in (blocks.get(day) or [])
+            ),
+            key=lambda block: block["from"],
+        )
         for day in WEEKDAYS
     }
 
