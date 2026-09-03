@@ -601,5 +601,7 @@
   "schedule.editor_fan_min_mode": "Ventilation min.",
   "schedule.editor_fan_max_mode": "Ventilation max.",
   "schedule.editor_dehumidify": "Autoriser la déshumidification",
-  "schedule.editor_inherit": "Hériter"
+  "schedule.editor_inherit": "Hériter",
+  "schedule.editor_import": "Copier les plages dans RoomMind",
+  "schedule.editor_import_failed": "Échec de l'import : {error}"
 }

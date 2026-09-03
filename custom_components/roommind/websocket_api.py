@@ -1004,6 +1004,44 @@ async def websocket_boost_learning(
     connection.send_result(msg["id"], {"success": True, "n_observations": n_obs})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "roommind/schedule/import",
+        vol.Required("entity_id"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_import_schedule(
+    hass: HomeAssistant,
+    connection: ActiveConnection,
+    msg: dict,
+) -> None:
+    """Read a schedule helper's weekly blocks so the panel can adopt them inline.
+
+    Copies the helper rather than consuming it: the caller decides whether to
+    replace the entity-backed entry, and the helper itself stays untouched.
+    """
+    from .utils.schedule_utils import normalize_blocks, read_schedule_blocks
+
+    entity_id = msg["entity_id"]
+    if not entity_id.startswith("schedule."):
+        connection.send_error(msg["id"], "invalid_entity", "Not a schedule helper")
+        return
+
+    blocks = await read_schedule_blocks(hass, entity_id)
+    if blocks is None:
+        connection.send_error(
+            msg["id"],
+            "schedule_unavailable",
+            f"Could not read blocks from {entity_id}",
+        )
+        return
+
+    state = hass.states.get(entity_id)
+    name = (state.attributes.get("friendly_name") if state else None) or entity_id
+    connection.send_result(msg["id"], {"name": name, "blocks": normalize_blocks(blocks)})
+
+
 # ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
@@ -1080,3 +1118,4 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_boost_learning)
     websocket_api.async_register_command(hass, websocket_get_diagnostics)
     websocket_api.async_register_command(hass, websocket_covers_clear_override)
+    websocket_api.async_register_command(hass, websocket_import_schedule)
