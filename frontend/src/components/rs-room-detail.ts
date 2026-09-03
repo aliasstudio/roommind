@@ -98,6 +98,10 @@ export class RsRoomDetail extends LitElement {
   private _prevAreaId: string | null = null;
   private _saveDebounce?: ReturnType<typeof setTimeout>;
 
+  private _masonryResizeObserver?: ResizeObserver;
+  private readonly _masonryObservedCards = new Set<Element>();
+  private _masonryFrame = 0;
+
   static styles = css`
     :host {
       display: block;
@@ -111,29 +115,19 @@ export class RsRoomDetail extends LitElement {
       gap: 16px;
     }
 
+    /* Masonry-style packing (shortest-column placement) done in JS rather
+       than CSS multi-column: Firefox's column-fill:balance algorithm can
+       strand a card in its own overflow column at some container widths,
+       and doesn't reliably rebalance when a card's height changes later. */
     .detail-grid {
-      column-count: 3;
-      column-width: 360px;
-      column-gap: 16px;
-      column-fill: balance;
-      /* Flex item: without this it cannot shrink below the multicol
-         min-content width (count x column-width), which Firefox resolves
-         from the declared column-count and then overflows the panel. */
+      position: relative;
       min-width: 0;
     }
 
     .detail-grid > * {
-      display: block;
-      width: 100%;
-      break-inside: avoid;
-      page-break-inside: avoid;
-      margin-bottom: 16px;
-    }
-
-    @media (min-width: 1900px) {
-      .detail-grid {
-        column-count: 4;
-      }
+      position: absolute;
+      top: 0;
+      left: 0;
     }
 
     /* Section cards handled by rs-section-card */
@@ -218,6 +212,8 @@ export class RsRoomDetail extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this._saveDebounce) clearTimeout(this._saveDebounce);
+    this._masonryResizeObserver?.disconnect();
+    if (this._masonryFrame) cancelAnimationFrame(this._masonryFrame);
   }
 
   updated(changedProps: Map<string, unknown>) {
@@ -241,6 +237,65 @@ export class RsRoomDetail extends LitElement {
     ) {
       this._optimisticCoverResume = false;
     }
+
+    this._syncMasonryObservers();
+    this._scheduleMasonryLayout();
+  }
+
+  private _syncMasonryObservers() {
+    const grid = this.renderRoot.querySelector(".detail-grid");
+    if (!grid) return;
+    if (!this._masonryResizeObserver) {
+      this._masonryResizeObserver = new ResizeObserver(() => this._scheduleMasonryLayout());
+      this._masonryResizeObserver.observe(grid);
+    }
+    const currentCards = new Set(grid.children);
+    for (const card of this._masonryObservedCards) {
+      if (!currentCards.has(card)) {
+        this._masonryResizeObserver.unobserve(card);
+        this._masonryObservedCards.delete(card);
+      }
+    }
+    for (const card of currentCards) {
+      if (!this._masonryObservedCards.has(card)) {
+        this._masonryResizeObserver.observe(card);
+        this._masonryObservedCards.add(card);
+      }
+    }
+  }
+
+  private _scheduleMasonryLayout() {
+    if (this._masonryFrame) cancelAnimationFrame(this._masonryFrame);
+    this._masonryFrame = requestAnimationFrame(() => {
+      this._masonryFrame = 0;
+      this._layoutMasonry();
+    });
+  }
+
+  private _layoutMasonry() {
+    const grid = this.renderRoot.querySelector<HTMLElement>(".detail-grid");
+    if (!grid) return;
+    const gap = 16;
+    const minColumnWidth = 360;
+    const maxColumns = grid.clientWidth >= 1900 ? 4 : 3;
+    const containerWidth = grid.clientWidth;
+    const columns = Math.min(
+      maxColumns,
+      Math.max(1, Math.floor((containerWidth + gap) / (minColumnWidth + gap))),
+    );
+    const columnWidth = (containerWidth - gap * (columns - 1)) / columns;
+    const columnHeights = new Array(columns).fill(0);
+
+    for (const card of Array.from(grid.children) as HTMLElement[]) {
+      const shortestColumn = columnHeights.indexOf(Math.min(...columnHeights));
+      const x = shortestColumn * (columnWidth + gap);
+      const y = columnHeights[shortestColumn];
+      card.style.width = `${columnWidth}px`;
+      card.style.transform = `translate(${x}px, ${y}px)`;
+      columnHeights[shortestColumn] = y + card.offsetHeight + gap;
+    }
+
+    grid.style.height = `${Math.max(0, Math.max(...columnHeights) - gap)}px`;
   }
 
   private _initFromConfig() {
