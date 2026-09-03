@@ -605,5 +605,6 @@
   "schedule.editor_import": "Copy blocks into RoomMind",
   "schedule.editor_import_failed": "Import failed: {error}",
   "schedule.editor_idle_action_ac": "Idle: climate device",
-  "schedule.editor_idle_action_trv": "Idle: radiator valve"
+  "schedule.editor_idle_action_trv": "Idle: radiator valve",
+  "schedule.editor_copy_from_room": "Copy schedule from another room"
 }

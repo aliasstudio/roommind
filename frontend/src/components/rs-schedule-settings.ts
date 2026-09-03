@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type {
   ClimateMode,
   DeviceConfig,
+  RoomConfig,
   ScheduleBlockData,
   ScheduleBlocks,
   ScheduleEntry,
@@ -17,6 +18,7 @@ import {
   tempRange,
 } from "../utils/temperature";
 import { RsScheduleBase } from "./shared/rs-schedule-base";
+import { getSelectValue } from "../utils/events";
 import { inputStyles } from "../styles/input-styles";
 import { emptyBlocks, findActiveBlock, isInlineSchedule } from "../utils/schedule";
 import "./rs-schedule-editor";
@@ -45,6 +47,9 @@ export class RsScheduleSettings extends RsScheduleBase {
   @property({ type: String }) public climateMode: ClimateMode = "auto";
   /** Room devices, forwarded so block fan fields offer real device modes. */
   @property({ attribute: false }) public devices: DeviceConfig[] = [];
+  /** Every room's config, so a schedule can be copied from another room. */
+  @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
+  @property({ type: String }) public areaId = "";
 
   /** Index of the inline schedule whose weekly editor is open, or -1. */
   @state() private _editingBlocksIndex = -1;
@@ -275,6 +280,7 @@ export class RsScheduleSettings extends RsScheduleBase {
       <button class="add-inline-button" @click=${this._addInlineSchedule}>
         ${localize("schedule.editor_add_inline", l)}
       </button>
+      ${this._renderCopyRow(l)}
       ${this._renderAddRow(
         localize("schedule.select_schedule", l),
         this._getAvailableEntities(usedIds),
@@ -542,6 +548,67 @@ export class RsScheduleSettings extends RsScheduleBase {
     "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z";
 
   // ─── Schedule management ───────────────────────────────────────
+
+  /** Inline schedules defined in other rooms, offered as copy sources. */
+  private get _copySources(): { key: string; label: string; schedule: ScheduleEntry }[] {
+    return Object.entries(this.rooms)
+      .filter(([areaId]) => areaId !== this.areaId)
+      .flatMap(([areaId, room]) =>
+        (room.schedules ?? []).filter(isInlineSchedule).map((schedule, index) => ({
+          key: `${areaId}:${index}`,
+          label: `${this._getRoomLabel(areaId, room)} — ${schedule.name || localize("schedule.editor_untitled", this.hass.language)}`,
+          schedule,
+        })),
+      );
+  }
+
+  private _getRoomLabel(areaId: string, room: RoomConfig): string {
+    return room.display_name || this.hass?.areas?.[areaId]?.name || areaId;
+  }
+
+  private _renderCopyRow(l: string) {
+    const sources = this._copySources;
+    if (sources.length === 0) return nothing;
+
+    return html`
+      <div class="add-schedule-row">
+        <ha-select
+          .value=${""}
+          .label=${localize("schedule.editor_copy_from_room", l)}
+          .options=${sources.map(({ key, label }) => ({ value: key, label }))}
+          @selected=${(event: Event) => {
+            const key = getSelectValue(event);
+            if (key) this._copyScheduleFrom(key);
+            requestAnimationFrame(() => {
+              (event.target as HTMLElement & { value: string }).value = "";
+            });
+          }}
+          @closed=${(event: Event) => event.stopPropagation()}
+          fixedMenuPosition
+          naturalMenuWidth
+        >
+          ${sources.map(
+            ({ key, label }) => html`<ha-list-item value=${key}>${label}</ha-list-item>`,
+          )}
+        </ha-select>
+      </div>
+    `;
+  }
+
+  /** Copies the blocks, so the two schedules diverge freely afterwards. */
+  private _copyScheduleFrom(key: string): void {
+    const source = this._copySources.find((candidate) => candidate.key === key);
+    if (!source?.schedule.blocks) return;
+
+    this._editingBlocksIndex = this.schedules.length;
+    this._emitSchedules([
+      ...this.schedules,
+      {
+        name: source.schedule.name || localize("schedule.editor_untitled", this.hass.language),
+        blocks: structuredClone(source.schedule.blocks),
+      },
+    ]);
+  }
 
   private _getScheduleLabel(schedule: ScheduleEntry): string {
     if (isInlineSchedule(schedule)) {
