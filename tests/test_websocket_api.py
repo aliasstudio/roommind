@@ -1823,14 +1823,14 @@ async def test_analytics_model_has_occupancy_sensors_false(ws_hass, store, conne
 
 
 def test_register_websocket_commands(hass):
-    """async_register_websocket_commands registers all 13 commands."""
+    """async_register_websocket_commands registers all 14 commands."""
     from unittest.mock import patch
 
     from custom_components.roommind.websocket_api import async_register_websocket_commands
 
     with patch("custom_components.roommind.websocket_api.websocket_api.async_register_command") as mock_reg:
         async_register_websocket_commands(hass)
-        assert mock_reg.call_count == 13
+        assert mock_reg.call_count == 14
 
 
 # ---------------------------------------------------------------------------
@@ -2869,3 +2869,62 @@ async def test_covers_clear_override_success(ws_hass, store, connection):
     coordinator.clear_cover_override.assert_called_once_with("lr")
     coordinator.async_request_refresh.assert_awaited_once()
     connection.send_result.assert_called_once_with(8, {"success": True})
+
+
+# ---------------------------------------------------------------------------
+# Schedule import
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_import_schedule_copies_helper_blocks(ws_hass, connection):
+    """Importing a helper returns its normalized blocks and friendly name."""
+    from custom_components.roommind.websocket_api import websocket_import_schedule
+
+    ws_hass.services.async_call = AsyncMock(
+        return_value={
+            "schedule.weekday": {
+                "monday": [
+                    {"from": "18:00:00", "to": "22:00:00", "data": {"temperature": 21.0}},
+                    {"from": "06:00:00", "to": "09:00:00", "data": {"temperature": 22.0}},
+                ]
+            }
+        }
+    )
+    state = MagicMock()
+    state.attributes = {"friendly_name": "Weekday heating"}
+    ws_hass.states.get = MagicMock(return_value=state)
+
+    msg = {"id": 90, "type": "roommind/schedule/import", "entity_id": "schedule.weekday"}
+    await websocket_import_schedule.__wrapped__(ws_hass, connection, msg)
+
+    result = connection.send_result.call_args[0][1]
+    assert result["name"] == "Weekday heating"
+    assert [block["from"] for block in result["blocks"]["monday"]] == ["06:00:00", "18:00:00"]
+    assert result["blocks"]["sunday"] == []
+
+
+@pytest.mark.asyncio
+async def test_import_schedule_rejects_non_schedule_entity(ws_hass, connection):
+    """Only schedule.* helpers can be imported."""
+    from custom_components.roommind.websocket_api import websocket_import_schedule
+
+    msg = {"id": 91, "type": "roommind/schedule/import", "entity_id": "input_boolean.nope"}
+    await websocket_import_schedule.__wrapped__(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_entity"
+
+
+@pytest.mark.asyncio
+async def test_import_schedule_reports_unreadable_helper(ws_hass, connection):
+    """A helper whose blocks cannot be read surfaces an error, not empty blocks."""
+    from custom_components.roommind.websocket_api import websocket_import_schedule
+
+    ws_hass.services.async_call = AsyncMock(side_effect=Exception("service_not_found"))
+
+    msg = {"id": 92, "type": "roommind/schedule/import", "entity_id": "schedule.missing"}
+    await websocket_import_schedule.__wrapped__(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "schedule_unavailable"

@@ -601,5 +601,7 @@
   "schedule.editor_fan_min_mode": "Min fan mode",
   "schedule.editor_fan_max_mode": "Max fan mode",
   "schedule.editor_dehumidify": "Allow dehumidifying",
-  "schedule.editor_inherit": "Inherit"
+  "schedule.editor_inherit": "Inherit",
+  "schedule.editor_import": "Copy blocks into RoomMind",
+  "schedule.editor_import_failed": "Import failed: {error}"
 }

@@ -40,6 +40,9 @@ export class RsScheduleSettings extends RsScheduleBase {
 
   /** Index of the inline schedule whose weekly editor is open, or -1. */
   @state() private _editingBlocksIndex = -1;
+  /** Index of the schedule currently being imported from its helper, or -1. */
+  @state() private _importingIndex = -1;
+  @state() private _importError = "";
 
   static styles = [
     RsScheduleBase.sharedStyles,
@@ -53,6 +56,12 @@ export class RsScheduleSettings extends RsScheduleBase {
         padding: 12px 14px;
         border-radius: 8px;
         background: var(--secondary-background-color, rgba(0, 0, 0, 0.03));
+      }
+
+      .import-error {
+        font-size: 12px;
+        color: var(--error-color, #db4437);
+        margin-bottom: 8px;
       }
 
       .add-inline-button {
@@ -250,6 +259,11 @@ export class RsScheduleSettings extends RsScheduleBase {
 
     return html`
       ${this._renderScheduleList()}
+      ${this._importError
+        ? html`<div class="import-error">
+            ${localize("schedule.editor_import_failed", l, { error: this._importError })}
+          </div>`
+        : nothing}
       <button class="add-inline-button" @click=${this._addInlineSchedule}>
         ${localize("schedule.editor_add_inline", l)}
       </button>
@@ -300,7 +314,14 @@ export class RsScheduleSettings extends RsScheduleBase {
                           this._editingBlocksIndex === index ? -1 : index)}
                     ></ha-icon-button>
                   `
-                : nothing}
+                : html`
+                    <ha-icon-button
+                      .path=${RsScheduleSettings.ICON_IMPORT}
+                      .label=${localize("schedule.editor_import", l)}
+                      .disabled=${this._importingIndex === index}
+                      @click=${() => this._importSchedule(index)}
+                    ></ha-icon-button>
+                  `}
               ${this._renderScheduleControls(
                 index,
                 count,
@@ -505,6 +526,9 @@ export class RsScheduleSettings extends RsScheduleBase {
     });
   }
 
+  private static readonly ICON_IMPORT =
+    "M13,5V11H14.17L12,13.17L9.83,11H11V5H13M15,3H9V9H5L12,16L19,9H15V3M19,18H5V20H19V18Z";
+
   private static readonly ICON_EDIT =
     "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z";
 
@@ -526,6 +550,34 @@ export class RsScheduleSettings extends RsScheduleBase {
         blocks: emptyBlocks(),
       },
     ]);
+  }
+
+  /**
+   * Copy a helper's weekly blocks into an inline schedule. The helper is left
+   * in place, so an unwanted import is undone by re-adding it.
+   */
+  private async _importSchedule(index: number) {
+    const entityId = this.schedules[index]?.entity_id;
+    if (!entityId) return;
+
+    this._importingIndex = index;
+    this._importError = "";
+    try {
+      const imported = await this.hass.callWS<{ name: string; blocks: ScheduleBlocks }>({
+        type: "roommind/schedule/import",
+        entity_id: entityId,
+      });
+      this._emitSchedules(
+        this.schedules.map((schedule, scheduleIndex) =>
+          scheduleIndex === index ? { name: imported.name, blocks: imported.blocks } : schedule,
+        ),
+      );
+      this._editingBlocksIndex = index;
+    } catch (error) {
+      this._importError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._importingIndex = -1;
+    }
   }
 
   private _patchSchedule(index: number, patch: Partial<ScheduleEntry>) {
