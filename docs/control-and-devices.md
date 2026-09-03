@@ -65,9 +65,9 @@ Optional, per AC device. While a room is actively dehumidifying (see `Active deh
 
 This setting overrides the setpoint sent specifically while drying, independent of the room's schedule and the anti-draft floor above. Leave it empty to keep using the room's scheduled cooling target.
 
-### Direct valve regulation
+### Valve opening degree
 
-Some heads expose their valve position as a `number` entity — the Sonoff TRVZB (firmware `1.3.0`+) exposes `number.*_valve_opening_degree` and `number.*_valve_closing_degree` through Zigbee2MQTT. Point a TRV device at those entities and RoomMind writes the valve position itself instead of inferring it from a boosted setpoint.
+The third setpoint mode, offered for TRVs only. Some heads expose their valve position as a `number` entity — the Sonoff TRVZB (firmware `1.3.0`+) exposes `number.*_valve_opening_degree` and `number.*_valve_closing_degree` through Zigbee2MQTT. Point a TRV device at those entities and RoomMind writes the valve position itself instead of inferring it from a boosted setpoint.
 
 This removes the head's internal thermostat from the loop: the `climate` entity is parked at its boost setpoint so it always demands heat, and how far the valve actually opens is the MPC power fraction, mapped onto the head's usable range.
 
@@ -86,7 +86,7 @@ Settings, per device:
 
 Requires an external room temperature sensor (`Full Control`). In `Managed` rooms the head must keep regulating on its own sensor, so the setpoint path applies and these settings are ignored.
 
-Leave `Valve opening degree entity` empty to keep the classic proportional-setpoint behavior. Valve protection (anti-seize) understands both: valve-regulated heads are cycled by driving the opening degree, not by setpoint games.
+The three setpoint modes are mutually exclusive: pick `Valve opening degree` to drive the position, or stay on `Proportional` / `Direct` to drive a setpoint. Valve protection (anti-seize) understands both: valve-regulated heads are cycled by driving the opening degree, not by setpoint games.
 
 Do not enable the TRVZB's own PID / "Smart Temperature Control" (firmware `1.4.4`+) alongside this. That is a second regulator fighting RoomMind for the same valve.
 

@@ -40,6 +40,7 @@ def make_valve_room(**valve_overrides):
     room = make_room()
     room["devices"][0].update(
         {
+            "setpoint_mode": "valve",
             "valve_opening_entity": OPENING,
             "valve_closing_entity": CLOSING,
             **valve_overrides,
@@ -100,7 +101,30 @@ def test_calculate_opening_degree_respects_capped_max():
 
 
 def test_get_valve_config_absent_without_opening_entity():
-    assert get_valve_config(make_room()["devices"], "climate.living_trv") is None
+    devices = make_valve_room(valve_opening_entity="")["devices"]
+    assert get_valve_config(devices, "climate.living_trv") is None
+
+
+@pytest.mark.parametrize("mode", ["proportional", "direct"])
+def test_valve_entities_are_ignored_outside_valve_mode(mode):
+    """The setpoint modes are mutually exclusive: only "valve" writes degrees."""
+    devices = make_valve_room(setpoint_mode=mode)["devices"]
+    assert get_valve_config(devices, "climate.living_trv") is None
+
+
+@pytest.mark.asyncio
+async def test_direct_mode_keeps_setpoint_control_despite_valve_entities():
+    hass = build_valve_hass()
+    ctrl = MPCController(
+        hass,
+        make_valve_room(setpoint_mode="direct"),
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    await ctrl.async_apply("heating", TargetTemps(heat=21.0), power_fraction=0.5, current_temp=19.0)
+    assert number_calls(hass) == []
 
 
 def test_get_valve_config_falls_back_when_min_exceeds_max():

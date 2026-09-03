@@ -40,6 +40,7 @@ from .services.analytics_service import (
     _safe_float,  # noqa: F401 - re-exported for tests
     build_analytics_data,
 )
+from .utils.device_utils import SETPOINT_MODE_VALVE, SETPOINT_MODES
 from .utils.schedule_utils import WEEKDAYS, normalize_time
 
 _LOGGER = logging.getLogger(__name__)
@@ -114,15 +115,21 @@ _SCHEDULE_SCHEMA = vol.All(
 )
 
 
-def _validate_device_idle_action(device: dict) -> dict:
-    """Enforce type-specific idle_action constraints.
+def _validate_device_modes(device: dict) -> dict:
+    """Enforce type-specific idle_action and setpoint_mode constraints.
 
     idle_action="low" lowers the setpoint to min_temp while keeping the
     device in its active hvac_mode. For ACs this would cool continuously
     toward the minimum, which is never the intent. Restrict "low" to TRVs.
+
+    setpoint_mode="valve" writes a valve opening degree, which only radiator
+    valves expose.
     """
-    if device.get("type") == "ac" and device.get("idle_action") == "low":
-        raise vol.Invalid("idle_action='low' is only supported for TRVs (type='trv')")
+    if device.get("type") == "ac":
+        if device.get("idle_action") == "low":
+            raise vol.Invalid("idle_action='low' is only supported for TRVs (type='trv')")
+        if device.get("setpoint_mode") == SETPOINT_MODE_VALVE:
+            raise vol.Invalid("setpoint_mode='valve' is only supported for TRVs (type='trv')")
     return device
 
 
@@ -424,7 +431,7 @@ async def websocket_list_rooms(
                     vol.Optional("fan_control", default="off"): vol.In(["off", "fixed", "auto"]),
                     vol.Optional("fan_min_mode", default=""): str,
                     vol.Optional("fan_max_mode", default=""): str,
-                    vol.Optional("setpoint_mode", default="proportional"): vol.In(["proportional", "direct"]),
+                    vol.Optional("setpoint_mode", default="proportional"): vol.In(SETPOINT_MODES),
                     vol.Optional("cool_setpoint_floor", default=None): vol.Any(None, "", vol.Coerce(float)),
                     vol.Optional("dehumidify_target", default=None): vol.Any(None, "", vol.Coerce(float)),
                     vol.Optional("valve_opening_entity", default=""): str,
@@ -442,7 +449,7 @@ async def websocket_list_rooms(
                         vol.Coerce(int), vol.Range(min=0, max=50)
                     ),
                 },
-                _validate_device_idle_action,
+                _validate_device_modes,
             )
         ],
         vol.Optional("temperature_sensor"): str,

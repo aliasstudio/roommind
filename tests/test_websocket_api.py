@@ -2348,12 +2348,12 @@ async def test_save_room_accepts_idle_action_low_for_trv(ws_hass, store, connect
 async def test_save_room_rejects_ac_with_low_idle_action(ws_hass, store, connection):
     """idle_action='low' is not permitted on AC devices — they would cool continuously.
 
-    Imports the real _validate_device_idle_action so the test catches any regression
+    Imports the real _validate_device_modes so the test catches any regression
     in the production validator, not a local copy.
     """
     import voluptuous as vol
 
-    from custom_components.roommind.websocket_api import _validate_device_idle_action
+    from custom_components.roommind.websocket_api import _validate_device_modes
 
     device_schema = vol.All(
         vol.Schema(
@@ -2364,7 +2364,7 @@ async def test_save_room_rejects_ac_with_low_idle_action(ws_hass, store, connect
                 vol.Optional("idle_action", default="off"): vol.In(["off", "fan_only", "setback", "low"]),
             }
         ),
-        _validate_device_idle_action,
+        _validate_device_modes,
     )
     save_room_schema = vol.Schema(
         {
@@ -2390,25 +2390,33 @@ async def test_save_room_rejects_ac_with_low_idle_action(ws_hass, store, connect
 
 
 @pytest.mark.asyncio
-async def test_validate_device_idle_action_unit():
+async def test_validate_device_modes_unit():
     """Direct unit test of the real validator — catches regressions if the function changes."""
     import voluptuous as vol
 
-    from custom_components.roommind.websocket_api import _validate_device_idle_action
+    from custom_components.roommind.websocket_api import _validate_device_modes
 
     # TRV + low is allowed
-    assert _validate_device_idle_action({"type": "trv", "idle_action": "low"}) == {
+    assert _validate_device_modes({"type": "trv", "idle_action": "low"}) == {
         "type": "trv",
         "idle_action": "low",
     }
     # AC + off is allowed
-    assert _validate_device_idle_action({"type": "ac", "idle_action": "off"}) == {
+    assert _validate_device_modes({"type": "ac", "idle_action": "off"}) == {
         "type": "ac",
         "idle_action": "off",
     }
     # AC + low is rejected
     with pytest.raises(vol.Invalid):
-        _validate_device_idle_action({"type": "ac", "idle_action": "low"})
+        _validate_device_modes({"type": "ac", "idle_action": "low"})
+
+    # setpoint_mode="valve" writes a valve opening degree — TRVs only
+    assert _validate_device_modes({"type": "trv", "setpoint_mode": "valve"}) == {
+        "type": "trv",
+        "setpoint_mode": "valve",
+    }
+    with pytest.raises(vol.Invalid):
+        _validate_device_modes({"type": "ac", "setpoint_mode": "valve"})
 
 
 @pytest.mark.asyncio

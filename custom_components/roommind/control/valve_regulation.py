@@ -26,7 +26,7 @@ from ..const import (
     DEFAULT_VALVE_OPENING_THRESHOLD,
     make_roommind_context,
 )
-from ..utils.device_utils import get_device_by_eid
+from ..utils.device_utils import SETPOINT_MODE_VALVE, get_device_by_eid
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,12 +53,24 @@ class ValveConfig:
 
 
 def get_valve_config(devices: list[dict], entity_id: str) -> ValveConfig | None:
-    """Return the valve config of a TRV, or None when it is setpoint-driven."""
+    """Return the valve config of a TRV, or None when it is setpoint-driven.
+
+    Valve regulation is one of the mutually exclusive setpoint modes, so a
+    device only qualifies when it is set to it *and* names an opening-degree
+    entity to write.
+    """
     device = get_device_by_eid(devices, entity_id)
     if device is None:
         return None
+    if device.get("setpoint_mode") != SETPOINT_MODE_VALVE:
+        return None
     opening_entity = device.get("valve_opening_entity")
     if not opening_entity:
+        _LOGGER.warning(
+            "TRV '%s' is set to valve regulation but names no opening degree entity, "
+            "falling back to proportional setpoints",
+            entity_id,
+        )
         return None
 
     min_opening = int(device.get("valve_min_opening") or DEFAULT_VALVE_MIN_OPENING)

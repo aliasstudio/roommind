@@ -116,7 +116,7 @@ export interface DeviceConfig {
   fan_control?: "off" | "fixed" | "auto"; // active fan strategy; default "off"
   fan_min_mode?: string; // auto: weakest allowed ladder speed ("" = ladder min)
   fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
-  setpoint_mode?: "proportional" | "direct"; // default "proportional"
+  setpoint_mode?: "proportional" | "direct" | "valve"; // default "proportional"; "valve" is TRV-only
   cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
   dehumidify_target?: number | null; // ac: dry-mode setpoint override (null = room's scheduled cool target)
   valve_opening_entity?: string; // trv: number.* valve opening degree; set = direct valve regulation
