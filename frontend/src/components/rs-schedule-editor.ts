@@ -184,6 +184,10 @@ export class RsScheduleEditor extends LitElement {
     return data.temperature != null ? "triple" : "";
   }
 
+  private get _hasAc(): boolean {
+    return this.devices.some((device) => device.type === "ac");
+  }
+
   /** Device types present in the room, so only relevant idle fields are shown. */
   private get _roomDeviceTypes(): ("ac" | "trv")[] {
     return (["ac", "trv"] as const).filter((deviceType) =>
@@ -341,7 +345,6 @@ export class RsScheduleEditor extends LitElement {
 
   private _renderAdvanced(day: Weekday, index: number, data: ScheduleBlockData): TemplateResult {
     const language = this.hass.language;
-    const fanFields = ["fan_min_mode", "fan_max_mode"] as const;
 
     return html`
       <div class="advanced">
@@ -356,37 +359,47 @@ export class RsScheduleEditor extends LitElement {
             (value) => this._patchIdleAction(day, index, deviceType, value),
           ),
         )}
-        ${this._renderFanModeField(
-          localize("schedule.editor_idle_fan_mode", language),
-          data.idle_fan_mode,
-          (value) => this._patchData(day, index, { idle_fan_mode: value }),
-        )}
-        ${this._renderChoiceField(
-          localize("schedule.editor_fan_control", language),
-          data.fan_control,
-          FAN_CONTROL_MODES.map((mode) => ({
-            value: mode,
-            label: localize(`devices.fan_control_${mode}`, language),
-          })),
-          (value) => this._patchData(day, index, { fan_control: value }),
-        )}
-        ${fanFields.map((field) =>
-          this._renderFanModeField(
-            localize(`schedule.editor_${field}`, language),
-            data[field],
-            (value) => this._patchData(day, index, { [field]: value }),
-          ),
-        )}
-        <div class="field switch-field">
-          <ha-switch
-            .checked=${data.dehumidify !== false}
-            @change=${(event: Event) => {
-              const isEnabled = (event.target as HTMLInputElement).checked;
-              this._patchData(day, index, { dehumidify: isEnabled ? undefined : false });
-            }}
-          ></ha-switch>
-          <label>${localize("schedule.editor_dehumidify", language)}</label>
-        </div>
+        ${this._hasAc ? this._renderAcFields(day, index, data) : nothing}
+      </div>
+    `;
+  }
+
+  /** Fan behavior and dehumidifying are AC-only, so a TRV-only room never shows them. */
+  private _renderAcFields(day: Weekday, index: number, data: ScheduleBlockData): TemplateResult {
+    const language = this.hass.language;
+    const fanFields = ["fan_min_mode", "fan_max_mode"] as const;
+
+    return html`
+      ${this._renderFanModeField(
+        localize("schedule.editor_idle_fan_mode", language),
+        data.idle_fan_mode,
+        (value) => this._patchData(day, index, { idle_fan_mode: value }),
+      )}
+      ${this._renderChoiceField(
+        localize("schedule.editor_fan_control", language),
+        data.fan_control,
+        FAN_CONTROL_MODES.map((mode) => ({
+          value: mode,
+          label: localize(`devices.fan_control_${mode}`, language),
+        })),
+        (value) => this._patchData(day, index, { fan_control: value }),
+      )}
+      ${fanFields.map((field) =>
+        this._renderFanModeField(
+          localize(`schedule.editor_${field}`, language),
+          data[field],
+          (value) => this._patchData(day, index, { [field]: value }),
+        ),
+      )}
+      <div class="field switch-field">
+        <ha-switch
+          .checked=${data.dehumidify !== false}
+          @change=${(event: Event) => {
+            const isEnabled = (event.target as HTMLInputElement).checked;
+            this._patchData(day, index, { dehumidify: isEnabled ? undefined : false });
+          }}
+        ></ha-switch>
+        <label>${localize("schedule.editor_dehumidify", language)}</label>
       </div>
     `;
   }

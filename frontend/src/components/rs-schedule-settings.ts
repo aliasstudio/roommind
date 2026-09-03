@@ -20,7 +20,12 @@ import {
 import { RsScheduleBase } from "./shared/rs-schedule-base";
 import { getSelectValue } from "../utils/events";
 import { inputStyles } from "../styles/input-styles";
-import { emptyBlocks, findActiveBlock, isInlineSchedule } from "../utils/schedule";
+import {
+  emptyBlocks,
+  findActiveBlock,
+  isInlineSchedule,
+  stripInapplicableData,
+} from "../utils/schedule";
 import "./rs-schedule-editor";
 
 @customElement("rs-schedule-settings")
@@ -605,7 +610,10 @@ export class RsScheduleSettings extends RsScheduleBase {
       ...this.schedules,
       {
         name: source.schedule.name || localize("schedule.editor_untitled", this.hass.language),
-        blocks: structuredClone(source.schedule.blocks),
+        blocks: stripInapplicableData(
+          structuredClone(source.schedule.blocks),
+          this.devices.map((device) => device.type),
+        ),
       },
     ]);
   }

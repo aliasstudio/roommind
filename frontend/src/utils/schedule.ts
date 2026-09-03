@@ -1,5 +1,11 @@
 import { WEEKDAYS } from "../types";
-import type { ScheduleBlock, ScheduleBlocks, ScheduleEntry, Weekday } from "../types";
+import type {
+  ScheduleBlock,
+  ScheduleBlockData,
+  ScheduleBlocks,
+  ScheduleEntry,
+  Weekday,
+} from "../types";
 
 /**
  * Build weekly blocks with every weekday present, so callers never see
@@ -54,5 +60,41 @@ export const findActiveBlock = (
   const now = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds();
   return (blocks[weekdayOf(date)] ?? []).find(
     (block) => toSeconds(block.from) <= now && now < toSeconds(block.to),
+  );
+};
+
+/** Block data keys that only mean anything for a given device type. */
+const TYPE_ONLY_KEYS = {
+  ac: [
+    "ac_idle_action",
+    "idle_fan_mode",
+    "fan_control",
+    "fan_min_mode",
+    "fan_max_mode",
+    "dehumidify",
+  ],
+  trv: ["trv_idle_action"],
+} as const satisfies Record<string, readonly (keyof ScheduleBlockData)[]>;
+
+/**
+ * Drop block settings the target room's devices cannot act on, so a schedule
+ * copied from an AC room does not carry dead fan keys into a radiator-only one.
+ */
+export const stripInapplicableData = (
+  blocks: ScheduleBlocks,
+  deviceTypes: readonly string[],
+): ScheduleBlocks => {
+  const dropped = Object.entries(TYPE_ONLY_KEYS)
+    .filter(([deviceType]) => !deviceTypes.includes(deviceType))
+    .flatMap(([, keys]) => keys as readonly string[]);
+  if (dropped.length === 0) return blocks;
+
+  return mapWeekdays((day) =>
+    (blocks[day] ?? []).map((block) => ({
+      ...block,
+      data: Object.fromEntries(
+        Object.entries(block.data ?? {}).filter(([key]) => !dropped.includes(key)),
+      ),
+    })),
   );
 };
