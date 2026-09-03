@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { WEEKDAYS } from "../types";
 import type {
   ClimateMode,
+  DeviceConfig,
   HomeAssistant,
   IdleAction,
   ScheduleBlock,
@@ -25,6 +26,8 @@ import { inputStyles } from "../styles/input-styles";
 
 const IDLE_ACTIONS: IdleAction[] = ["off", "fan_only", "setback", "low"];
 
+const FAN_CONTROL_MODES = ["off", "fixed", "auto"] as const;
+
 const DEFAULT_BLOCK: ScheduleBlock = { from: "08:00:00", to: "22:00:00", data: {} };
 
 /** Weekly block editor for one inline schedule; emits the whole week on change. */
@@ -33,6 +36,8 @@ export class RsScheduleEditor extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public blocks: ScheduleBlocks = emptyBlocks();
   @property({ type: String }) public climateMode: ClimateMode = "auto";
+  /** Room devices, so fan fields offer the same modes as the device settings. */
+  @property({ attribute: false }) public devices: DeviceConfig[] = [];
 
   /** "monday:2" — only one block's advanced panel is open at a time. */
   @state() private _expanded = "";
@@ -107,6 +112,9 @@ export class RsScheduleEditor extends LitElement {
       .temps.single {
         grid-template-columns: minmax(0, 1fr);
       }
+      .temps.triple {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
 
       /* Six controls on a 3-column grid fill exactly two rows, no ragged tail. */
       .advanced {
@@ -166,6 +174,19 @@ export class RsScheduleEditor extends LitElement {
     "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z";
   private static readonly ICON_TUNE =
     "M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z";
+
+  private _tempsLayoutClass(data: ScheduleBlockData): string {
+    if (this.climateMode !== "auto") return "single";
+    return data.temperature != null ? "triple" : "";
+  }
+
+  /** Union of the fan modes the room's climate entities report. */
+  private get _fanModes(): string[] {
+    const modes = this.devices.flatMap(
+      (device) => (this.hass?.states?.[device.entity_id]?.attributes?.fan_modes ?? []) as string[],
+    );
+    return [...new Set(modes)];
+  }
 
   protected render(): TemplateResult {
     return html`${WEEKDAYS.map((day) => this._renderDay(day))}`;
@@ -236,7 +257,7 @@ export class RsScheduleEditor extends LitElement {
           @change=${(event: Event) =>
             this._patchBlock(day, index, { to: padTime(this._inputValue(event)) })}
         />
-        <div class="temps ${this.climateMode === "auto" ? "" : "single"}">
+        <div class="temps ${this._tempsLayoutClass(data)}">
           ${this._renderTemps(day, index, data)}
         </div>
         <ha-icon-button
@@ -254,27 +275,34 @@ export class RsScheduleEditor extends LitElement {
     `;
   }
 
+  /**
+   * A single `temperature` still shows in auto mode when the block carries one
+   * (YAML schedules commonly do), otherwise imported targets would be invisible
+   * here while still driving the room.
+   */
   private _renderTemps(day: Weekday, index: number, data: ScheduleBlockData): TemplateResult {
     const language = this.hass.language;
-    if (this.climateMode === "auto") {
-      return html`
-        ${this._renderTempField(
-          localize("schedule.row_heat", language),
-          data.heat_temperature,
-          (value) => this._patchData(day, index, { heat_temperature: value }),
-        )}
-        ${this._renderTempField(
-          localize("schedule.row_cool", language),
-          data.cool_temperature,
-          (value) => this._patchData(day, index, { cool_temperature: value }),
-        )}
-      `;
-    }
-    return this._renderTempField(
+    const single = this._renderTempField(
       localize("schedule.editor_temperature", language),
       data.temperature,
       (value) => this._patchData(day, index, { temperature: value }),
     );
+
+    if (this.climateMode !== "auto") return single;
+
+    return html`
+      ${data.temperature != null ? single : nothing}
+      ${this._renderTempField(
+        localize("schedule.row_heat", language),
+        data.heat_temperature,
+        (value) => this._patchData(day, index, { heat_temperature: value }),
+      )}
+      ${this._renderTempField(
+        localize("schedule.row_cool", language),
+        data.cool_temperature,
+        (value) => this._patchData(day, index, { cool_temperature: value }),
+      )}
+    `;
   }
 
   private _renderTempField(
@@ -302,35 +330,35 @@ export class RsScheduleEditor extends LitElement {
 
   private _renderAdvanced(day: Weekday, index: number, data: ScheduleBlockData): TemplateResult {
     const language = this.hass.language;
-    const fanFields = ["fan_control", "fan_min_mode", "fan_max_mode"] as const;
+    const fanFields = ["fan_min_mode", "fan_max_mode"] as const;
 
     return html`
       <div class="advanced">
-        <div class="field">
-          <ha-select
-            .label=${localize("schedule.editor_idle_action", language)}
-            .value=${data.idle_action ?? ""}
-            @selected=${(event: Event) =>
-              this._patchData(day, index, {
-                idle_action: (getSelectValue(event) || undefined) as IdleAction | undefined,
-              })}
-            @closed=${(event: Event) => event.stopPropagation()}
-            fixedMenuPosition
-            naturalMenuWidth
-          >
-            <ha-list-item value="">${localize("schedule.editor_inherit", language)}</ha-list-item>
-            ${IDLE_ACTIONS.map(
-              (action) => html`<ha-list-item value=${action}>${action}</ha-list-item>`,
-            )}
-          </ha-select>
-        </div>
-        ${this._renderTextField(
+        ${this._renderChoiceField(
+          localize("schedule.editor_idle_action", language),
+          data.idle_action,
+          IDLE_ACTIONS.map((action) => ({
+            value: action,
+            label: localize(`devices.idle_action_${action}`, language),
+          })),
+          (value) => this._patchData(day, index, { idle_action: value }),
+        )}
+        ${this._renderFanModeField(
           localize("schedule.editor_idle_fan_mode", language),
           data.idle_fan_mode,
           (value) => this._patchData(day, index, { idle_fan_mode: value }),
         )}
+        ${this._renderChoiceField(
+          localize("schedule.editor_fan_control", language),
+          data.fan_control,
+          FAN_CONTROL_MODES.map((mode) => ({
+            value: mode,
+            label: localize(`devices.fan_control_${mode}`, language),
+          })),
+          (value) => this._patchData(day, index, { fan_control: value }),
+        )}
         ${fanFields.map((field) =>
-          this._renderTextField(
+          this._renderFanModeField(
             localize(`schedule.editor_${field}`, language),
             data[field],
             (value) => this._patchData(day, index, { [field]: value }),
@@ -346,6 +374,56 @@ export class RsScheduleEditor extends LitElement {
           ></ha-switch>
           <label>${localize("schedule.editor_dehumidify", language)}</label>
         </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Fan modes come from the room's climate entities. With none reported (no AC,
+   * or the entity is unavailable) fall back to text, so an imported value stays
+   * visible and editable instead of being silently uneditable.
+   */
+  private _renderFanModeField(
+    label: string,
+    value: string | undefined,
+    onChange: (value: string | undefined) => void,
+  ): TemplateResult {
+    const fanModes = this._fanModes;
+    if (fanModes.length === 0) {
+      return this._renderTextField(label, value, onChange);
+    }
+    return this._renderChoiceField(
+      label,
+      value,
+      fanModes.map((mode) => ({ value: mode, label: mode })),
+      onChange,
+    );
+  }
+
+  /** A select whose empty option means "inherit the device setting". */
+  private _renderChoiceField<T extends string>(
+    label: string,
+    value: T | undefined,
+    options: { value: T; label: string }[],
+    onChange: (value: T | undefined) => void,
+  ): TemplateResult {
+    const inherit = localize("schedule.editor_inherit", this.hass.language);
+    return html`
+      <div class="field">
+        <ha-select
+          .label=${label}
+          .value=${value ?? ""}
+          .options=${[{ value: "", label: inherit }, ...options]}
+          @selected=${(event: Event) => onChange((getSelectValue(event) || undefined) as T)}
+          @closed=${(event: Event) => event.stopPropagation()}
+          fixedMenuPosition
+          naturalMenuWidth
+        >
+          <ha-list-item value="">${inherit}</ha-list-item>
+          ${options.map(
+            (option) => html`<ha-list-item value=${option.value}>${option.label}</ha-list-item>`,
+          )}
+        </ha-select>
       </div>
     `;
   }

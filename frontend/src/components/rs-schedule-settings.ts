@@ -1,6 +1,12 @@
 import { html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { ScheduleBlockData, ScheduleBlocks, ScheduleEntry, ClimateMode } from "../types";
+import type {
+  ClimateMode,
+  DeviceConfig,
+  ScheduleBlockData,
+  ScheduleBlocks,
+  ScheduleEntry,
+} from "../types";
 import { localize } from "../utils/localize";
 import {
   formatTemp,
@@ -37,6 +43,8 @@ export class RsScheduleSettings extends RsScheduleBase {
   @property({ type: Number }) public ecoHeat = 17.0;
   @property({ type: Number }) public ecoCool = 27.0;
   @property({ type: String }) public climateMode: ClimateMode = "auto";
+  /** Room devices, forwarded so block fan fields offer real device modes. */
+  @property({ attribute: false }) public devices: DeviceConfig[] = [];
 
   /** Index of the inline schedule whose weekly editor is open, or -1. */
   @state() private _editingBlocksIndex = -1;
@@ -344,6 +352,7 @@ export class RsScheduleSettings extends RsScheduleBase {
                       .hass=${this.hass}
                       .blocks=${schedule.blocks ?? emptyBlocks()}
                       .climateMode=${this.climateMode}
+                      .devices=${this.devices}
                       @blocks-changed=${(event: CustomEvent<{ value: ScheduleBlocks }>) => {
                         event.stopPropagation();
                         this._patchSchedule(index, { blocks: event.detail.value });
