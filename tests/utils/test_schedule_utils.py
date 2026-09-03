@@ -14,6 +14,7 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.roommind.const import TargetTemps
 from custom_components.roommind.utils.schedule_utils import (
+    WEEKDAYS,
     find_active_block,
     get_active_schedule_entity,
     make_target_resolver,
@@ -1686,3 +1687,38 @@ class TestInlineSchedules:
         from custom_components.roommind.utils.schedule_utils import resolve_active_schedule_blocks
 
         assert await resolve_active_schedule_blocks(self._hass_without_selector(), {"schedules": []}) == (None, None)
+
+
+class TestNormalizeTime:
+    """HA renders an end-of-day 24:00:00 as 23:59:59.999999."""
+
+    def test_truncates_fractional_seconds(self):
+        from custom_components.roommind.utils.schedule_utils import normalize_time
+
+        assert normalize_time("23:59:59.999999") == "23:59:59"
+
+    def test_pads_bare_hours_and_minutes(self):
+        from custom_components.roommind.utils.schedule_utils import normalize_time
+
+        assert normalize_time("9:05") == "09:05:00"
+
+    def test_accepts_time_objects(self):
+        from datetime import time as time_cls
+
+        from custom_components.roommind.utils.schedule_utils import normalize_time
+
+        assert normalize_time(time_cls(6, 30)) == "06:30:00"
+
+    def test_normalize_blocks_canonicalizes_times(self):
+        from custom_components.roommind.utils.schedule_utils import normalize_blocks
+
+        blocks = normalize_blocks({"monday": [{"from": "23:00", "to": "23:59:59.999999"}]})
+
+        assert blocks["monday"] == [{"from": "23:00:00", "to": "23:59:59"}]
+
+    def test_active_block_found_after_normalizing_fractional_end(self):
+        from custom_components.roommind.utils.schedule_utils import find_active_block, normalize_blocks
+
+        blocks = normalize_blocks({day: [{"from": "00:00:00", "to": "23:59:59.999999"}] for day in WEEKDAYS})
+
+        assert find_active_block(blocks, time.time()) is not None

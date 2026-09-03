@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -39,12 +40,24 @@ from .services.analytics_service import (
     _safe_float,  # noqa: F401 - re-exported for tests
     build_analytics_data,
 )
-from .utils.schedule_utils import WEEKDAYS
+from .utils.schedule_utils import WEEKDAYS, normalize_time
 
 _LOGGER = logging.getLogger(__name__)
 
 
-_TIME_PATTERN = vol.Match(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,6})?)?$")
+
+
+def _time_string(value: str) -> str:
+    """Validate a block time and store it canonically as ``HH:MM:SS``.
+
+    Accepts the fractional seconds HA produces for an end-of-day ``24:00:00``
+    (``23:59:59.999999``), which would otherwise be unparseable downstream.
+    """
+    if not isinstance(value, str) or not _TIME_RE.match(value):
+        raise vol.Invalid(f"invalid time: {value!r}")
+    return normalize_time(value)
+
 
 _BLOCK_DATA_SCHEMA = vol.Schema(
     {
@@ -70,8 +83,8 @@ def _validate_block(block: dict) -> dict:
 
 _BLOCK_SCHEMA = vol.All(
     {
-        vol.Required("from"): _TIME_PATTERN,
-        vol.Required("to"): _TIME_PATTERN,
+        vol.Required("from"): _time_string,
+        vol.Required("to"): _time_string,
         vol.Optional("data", default=dict): _BLOCK_DATA_SCHEMA,
     },
     _validate_block,
