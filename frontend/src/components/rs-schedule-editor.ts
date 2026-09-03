@@ -180,8 +180,8 @@ export class RsScheduleEditor extends LitElement {
     "M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z";
 
   private _tempsLayoutClass(data: ScheduleBlockData): string {
-    if (this.climateMode !== "auto") return "single";
-    return data.temperature != null ? "triple" : "";
+    const count = (data.temperature != null ? 1 : 0) + (this.climateMode === "auto" ? 2 : 1);
+    return count === 1 ? "single" : count === 3 ? "triple" : "";
   }
 
   private get _hasAc(): boolean {
@@ -291,33 +291,44 @@ export class RsScheduleEditor extends LitElement {
   }
 
   /**
-   * A single `temperature` still shows in auto mode when the block carries one
-   * (YAML schedules commonly do), otherwise imported targets would be invisible
-   * here while still driving the room.
+   * Shows the fields that actually drive the room: the split targets the
+   * resolver prefers, narrowed to the room's climate mode, plus the type-less
+   * `temperature` whenever a block still carries one (YAML schedules commonly
+   * do) so an imported target is never invisible while it steers the room.
    */
   private _renderTemps(day: Weekday, index: number, data: ScheduleBlockData): TemplateResult {
     const language = this.hass.language;
-    const single = this._renderTempField(
-      localize("schedule.editor_temperature", language),
-      data.temperature,
-      (value) => this._patchData(day, index, { temperature: value }),
-    );
+    const fields: TemplateResult[] = [];
 
-    if (this.climateMode !== "auto") return single;
+    if (data.temperature != null) {
+      fields.push(
+        this._renderTempField(
+          localize("schedule.editor_temperature", language),
+          data.temperature,
+          (value) => this._patchData(day, index, { temperature: value }),
+        ),
+      );
+    }
+    if (this.climateMode !== "cool_only") {
+      fields.push(
+        this._renderTempField(
+          localize("schedule.row_heat", language),
+          data.heat_temperature,
+          (value) => this._patchData(day, index, { heat_temperature: value }),
+        ),
+      );
+    }
+    if (this.climateMode !== "heat_only") {
+      fields.push(
+        this._renderTempField(
+          localize("schedule.row_cool", language),
+          data.cool_temperature,
+          (value) => this._patchData(day, index, { cool_temperature: value }),
+        ),
+      );
+    }
 
-    return html`
-      ${data.temperature != null ? single : nothing}
-      ${this._renderTempField(
-        localize("schedule.row_heat", language),
-        data.heat_temperature,
-        (value) => this._patchData(day, index, { heat_temperature: value }),
-      )}
-      ${this._renderTempField(
-        localize("schedule.row_cool", language),
-        data.cool_temperature,
-        (value) => this._patchData(day, index, { cool_temperature: value }),
-      )}
-    `;
+    return html`${fields}`;
   }
 
   private _renderTempField(
