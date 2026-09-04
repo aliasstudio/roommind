@@ -138,6 +138,10 @@ export function buildChartSeries(
       data: targetData,
       showSymbol: false,
       smooth: false,
+      // Target is a held setpoint (schedule value, or whichever of
+      // heat/cool applies in auto mode), not a continuous quantity — a
+      // step avoids drawing a diagonal ramp across mode switches.
+      step: "end",
       lineStyle: { width: 2, type: "dashed" },
       yAxisIndex: 0,
     });
