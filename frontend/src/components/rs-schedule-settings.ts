@@ -7,6 +7,7 @@ import type {
   ScheduleBlockData,
   ScheduleBlocks,
   ScheduleEntry,
+  ScheduleTempWarning,
 } from "../types";
 import { localize } from "../utils/localize";
 import {
@@ -14,6 +15,8 @@ import {
   tempUnit,
   toDisplay,
   toCelsius,
+  MIN_TARGET_TEMP_C,
+  MAX_TARGET_TEMP_C,
   tempStep,
   tempRange,
 } from "../utils/temperature";
@@ -27,6 +30,9 @@ import {
   stripInapplicableData,
 } from "../utils/schedule";
 import "./rs-schedule-editor";
+
+/** Mirrors _WEEKDAYS in the backend's schedule_utils.py. */
+const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
 @customElement("rs-schedule-settings")
 export class RsScheduleSettings extends RsScheduleBase {
@@ -61,6 +67,7 @@ export class RsScheduleSettings extends RsScheduleBase {
   /** Index of the schedule currently being imported from its helper, or -1. */
   @state() private _importingIndex = -1;
   @state() private _importError = "";
+  @property({ attribute: false }) public scheduleTempWarnings: ScheduleTempWarning[] = [];
 
   static styles = [
     RsScheduleBase.sharedStyles,
@@ -348,6 +355,7 @@ export class RsScheduleSettings extends RsScheduleBase {
                 (i) => this._removeSchedule(i),
               )}
             </div>
+            ${this._renderRejectedTempWarning(state)}
             ${this._editingBlocksIndex === index && isInlineSchedule(schedule)
               ? html`
                   <div class="blocks-editor">
@@ -376,6 +384,48 @@ export class RsScheduleSettings extends RsScheduleBase {
         })}
       </div>
     `;
+  }
+
+  /**
+   * Warn about block temperatures the backend discarded (#395).
+   *
+   * Sourced from the backend's whole-week scan, so a typo in the 03:00 block is
+   * visible at any time of day — not just while that block is running. The scan
+   * covers the active schedule only, hence the warning hangs off that row.
+   */
+  private _renderRejectedTempWarning(state: "active" | "inactive" | "unreachable") {
+    if (state !== "active") return nothing;
+    const warnings = this.scheduleTempWarnings ?? [];
+    if (warnings.length === 0) return nothing;
+
+    const range = tempRange(MIN_TARGET_TEMP_C, MAX_TARGET_TEMP_C, this.hass);
+    return html`
+      <div class="inline-warning">
+        <ha-icon icon="mdi:alert-outline"></ha-icon>
+        ${localize("schedule.block_temp_rejected", this.hass.language, {
+          values: warnings.map((w) => this._formatWarning(w)).join(", "),
+          min: range.min,
+          max: range.max,
+          unit: tempUnit(this.hass),
+        })}
+      </div>
+    `;
+  }
+
+  /** "110 (Mon 00:00)" — weekday localised via Intl, so no extra locale keys. */
+  private _formatWarning(w: ScheduleTempWarning): string {
+    const index = WEEKDAYS.indexOf(w.day);
+    let when = w.from.slice(0, 5);
+    if (index >= 0) {
+      // 2024-01-01 was a Monday, so +index lands on the right weekday.
+      const date = new Date(Date.UTC(2024, 0, 1 + index));
+      const weekday = new Intl.DateTimeFormat(this.hass.language, {
+        weekday: "short",
+        timeZone: "UTC",
+      }).format(date);
+      when = `${weekday} ${when}`;
+    }
+    return `${w.value} (${when})`;
   }
 
   // ─── Temperature inputs ────────────────────────────────────────
@@ -522,7 +572,9 @@ export class RsScheduleSettings extends RsScheduleBase {
       });
     }
 
-    if (data.temperature != null) {
+    const isUsable = (value: number | null | undefined): value is number =>
+      value != null && value >= MIN_TARGET_TEMP_C && value <= MAX_TARGET_TEMP_C;
+    if (isUsable(data.temperature)) {
       return localize("schedule.from_schedule", l, {
         temp: formatTemp(data.temperature, this.hass),
         unit: tempUnit(this.hass),

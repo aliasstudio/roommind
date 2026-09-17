@@ -49,6 +49,10 @@ export class RsRoomDetail extends LitElement {
   @property({ type: Boolean }) public climateControlActive = true;
 
   @property({ type: Boolean }) public valveProtectionEnabled = false;
+  @property({ type: Boolean }) public coilDryEnabled = false;
+  @property({ type: Number }) public coilDryMinutes = 20;
+  @property({ type: String }) public coilDryMode = "fan_only";
+  @property({ type: String }) public coilDryFanMode = "low";
 
   @state() private _devices: DeviceConfig[] = [];
   @state() private _selectedTempSensor = "";
@@ -503,6 +507,7 @@ export class RsRoomDetail extends LitElement {
                 >
                   <rs-schedule-settings
                     .hass=${this.hass}
+                    .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
                     .schedules=${this._schedules}
                     .scheduleSelectorEntity=${this._scheduleSelectorEntity}
                     .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
@@ -555,6 +560,10 @@ export class RsRoomDetail extends LitElement {
                     .selectedTempSensor=${this._selectedTempSensor}
                     .valveProtectionExclude=${this._valveProtectionExclude}
                     .valveProtectionEnabled=${this.valveProtectionEnabled}
+                    .coilDryEnabledGlobal=${this.coilDryEnabled}
+                    .coilDryMinutesGlobal=${this.coilDryMinutes}
+                    .coilDryModeGlobal=${this.coilDryMode}
+                    .coilDryFanModeGlobal=${this.coilDryFanMode}
                     @device-changed=${this._onDeviceChanged}
                     @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
                   ></rs-device-section>
@@ -742,6 +751,7 @@ export class RsRoomDetail extends LitElement {
           </div>
           <rs-schedule-settings
             .hass=${this.hass}
+            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
             .schedules=${this._schedules}
             .scheduleSelectorEntity=${this._scheduleSelectorEntity}
             .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
@@ -795,6 +805,10 @@ export class RsRoomDetail extends LitElement {
             .selectedTempSensor=${this._selectedTempSensor}
             .valveProtectionExclude=${this._valveProtectionExclude}
             .valveProtectionEnabled=${this.valveProtectionEnabled}
+            .coilDryEnabledGlobal=${this.coilDryEnabled}
+            .coilDryMinutesGlobal=${this.coilDryMinutes}
+            .coilDryModeGlobal=${this.coilDryMode}
+            .coilDryFanModeGlobal=${this.coilDryFanMode}
             @device-changed=${this._onDeviceChanged}
             @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
           ></rs-device-section>
