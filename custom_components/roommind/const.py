@@ -108,6 +108,18 @@ EKF_UPDATE_MIN_DT = 3.0  # minutes — matches HISTORY_WRITE_CYCLES
 OUTDOOR_UNAVAILABLE_NOTIFY_CYCLES = 60
 OUTDOOR_UNAVAILABLE_NOTIFICATION_ID = "roommind_outdoor_unavailable"
 
+# Effectiveness watchdog: a mode held at full power for this long without the
+# room temperature moving means the device accepts commands but does nothing
+# (dead compressor, seized valve).  First occurrence power-cycles the ACs, a
+# second one notifies the user.
+WATCHDOG_GRACE_S = 20 * 60
+WATCHDOG_MIN_PROGRESS_C = 0.2
+WATCHDOG_MIN_POWER_FRACTION = 0.8
+# A room this close to target (or past it) is expected to hold still.
+WATCHDOG_TARGET_BAND_C = 0.5
+WATCHDOG_NOTIFICATION_ID_PREFIX = "roommind_ineffective_"
+DEFAULT_EFFECTIVENESS_WATCHDOG = True
+
 # Prediction clamping: max °C change in one prediction step (prevents unrealistic jumps)
 MAX_PREDICTION_DELTA = 3.0
 

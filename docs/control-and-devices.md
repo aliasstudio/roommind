@@ -255,3 +255,16 @@ In that case RoomMind can decide which source should heat:
 - or both, when the gap is large
 
 It uses temperature gap and outdoor conditions to make that choice.
+
+## Watchdog: Devices That Accept Commands And Do Nothing
+
+A device can report exactly the mode RoomMind asked for and still do nothing — an AC whose cloud API echoes `cool` back while the compressor never starts, a TRV whose valve is mechanically stuck, a radiator with no hot water. RoomMind normally trusts the reported state, and its redundancy guard will not re-send a mode the device already claims to be in, so without help the room would sit in that mode indefinitely.
+
+The watchdog compares the room temperature against the one measured when the mode started. It only runs while RoomMind actually drives the room (climate control on, no open window, not forced off) and the device is at full power — a device that modulates down is either working or near target, and its episode is re-baselined.
+
+When 20 minutes pass with less than 0.2 °C of movement in the commanded direction:
+
+1. The room's ACs are power-cycled. Off then on re-sends the whole mode + setpoint + fan sequence, which is what usually revives a unit stuck in a phantom "on" state.
+2. If another 20 minutes pass with still no movement, RoomMind raises a Home Assistant notification naming the room. At that point the problem is below RoomMind: either the hardware does not act on the commands, or its integration accepts commands the device never receives — a cloud-connected AC whose vendor API is down keeps reporting the mode it was asked for while the unit stays off.
+
+The mode keeps running throughout — the watchdog reports, it never gives up on the room. The notification clears by itself once the room starts responding again. Turn the whole thing off under `Settings → Control` if the alerts are not useful for your setup.

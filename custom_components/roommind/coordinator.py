@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_EFFECTIVENESS_WATCHDOG,
     DEFAULT_HEAT_SOURCE_PRIMARY,
     DEFAULT_HEATING_SEASON,
     DEFAULT_OUTDOOR_HEATING_MAX,
@@ -41,6 +42,8 @@ from .const import (
     SCHEDULE_STATE_ON,
     THERMAL_SAVE_CYCLES,
     UPDATE_INTERVAL,
+    WATCHDOG_GRACE_S,
+    WATCHDOG_NOTIFICATION_ID_PREFIX,
     TargetTemps,
     build_override_live,
     is_override_active,
@@ -65,6 +68,7 @@ from .managers.compressor_group_manager import (
 )
 from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.dehumidify_manager import DehumidifyManager
+from .managers.effectiveness_watchdog import EffectivenessWatchdog, WatchdogVerdict
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.fan_speed_manager import FAN_FULL_BAND_C, FanSpeedManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
@@ -198,6 +202,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._mode_on_since: dict[str, float] = {}
         # Min-off (anti-short-cycle): timestamp when the room last went idle
         self._off_since: dict[str, float] = {}
+        # "Commanded but nothing happens" detection, and the rooms it alerted on
+        self._watchdog = EffectivenessWatchdog()
+        self._watchdog_alerted: set[str] = set()
         # Sensor dropout fallback: last valid temperature per room
         self._last_valid_temps: dict[str, tuple[float, float]] = {}  # {area_id: (celsius, monotonic_ts)}
         # Startup guard: rooms with at least one valid temperature reading since
@@ -553,6 +560,90 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             notification_id=OUTDOOR_UNAVAILABLE_NOTIFICATION_ID,
         )
         self._outdoor_warning_sent = True
+
+    async def _check_mode_effectiveness(
+        self,
+        *,
+        area_id: str,
+        room: dict,
+        settings: dict,
+        mode: str,
+        power_fraction: float,
+        current_temp: float | None,
+        target_temp: float | None,
+        controllable: bool,
+    ) -> None:
+        """Act on a mode that runs at full power without moving the room.
+
+        The first stall power-cycles the room's ACs: a unit whose reported state
+        says "cooling" while nothing happens usually comes back after an off/on,
+        and the redundancy guard in the MPC controller cannot re-send a mode the
+        device already claims to be in. A stall that survives the power-cycle is
+        beyond RoomMind's reach — the hardware is faulty, or the integration is
+        accepting commands the device never receives — and gets a notification.
+        """
+        if not settings.get("effectiveness_watchdog_enabled", DEFAULT_EFFECTIVENESS_WATCHDOG):
+            self._watchdog.reset(area_id)
+            return
+
+        verdict = self._watchdog.evaluate(
+            area_id,
+            mode,
+            current_temp,
+            power_fraction,
+            target_temp,
+            controllable=controllable,
+        )
+        ac_eids = get_ac_eids(room.get("devices", []))
+
+        if verdict is WatchdogVerdict.OK:
+            if area_id in self._watchdog_alerted and not self._watchdog.get_state(area_id, current_temp).stalled:
+                self._watchdog_alerted.discard(area_id)
+                async_dismiss_notification(self.hass, WATCHDOG_NOTIFICATION_ID_PREFIX + area_id)
+            return
+
+        if verdict is WatchdogVerdict.REARM and ac_eids:
+            _LOGGER.warning(
+                "Area '%s': %s commanded at full power for %d min with no temperature response — power-cycling %s",
+                area_id,
+                mode,
+                WATCHDOG_GRACE_S // 60,
+                ", ".join(ac_eids),
+            )
+            for eid in ac_eids:
+                try:
+                    await self.hass.services.async_call(
+                        "climate",
+                        "turn_off",
+                        {"entity_id": eid},
+                        blocking=True,
+                        context=make_roommind_context(),
+                    )
+                except Exception:  # noqa: BLE001
+                    _LOGGER.warning("Area '%s': watchdog power-cycle failed on '%s'", area_id, eid, exc_info=True)
+            return
+
+        # No AC to power-cycle, or the power-cycle already failed to help.
+        area_name = _get_area_name(self.hass, area_id)
+        self._watchdog_alerted.add(area_id)
+        _LOGGER.warning(
+            "Area '%s': %s has had no effect on the room temperature — the devices accept commands but "
+            "nothing is happening",
+            area_id,
+            mode,
+        )
+        async_create_notification(
+            self.hass,
+            f"RoomMind has been commanding **{mode}** in **{area_name}** at full power for "
+            f"{WATCHDOG_GRACE_S // 60} minutes, but the room temperature is not moving.\n\n"
+            "The devices report the right mode, so either the commands never reach the hardware "
+            "(a cloud integration that accepts them while the device is offline) or the hardware "
+            "does not act on them — a compressor that never starts, a seized valve, a radiator "
+            "with no hot water. Check whether the device responds to its own remote, and whether "
+            "its integration is online. RoomMind keeps the mode running in the meantime.",
+            title=f"RoomMind: {area_name} is not responding",
+            notification_id=WATCHDOG_NOTIFICATION_ID_PREFIX + area_id,
+        )
 
     async def _evaluate_mold_risk(
         self,
@@ -1119,6 +1210,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             climate_active=climate_active,
         )
 
+        await self._check_mode_effectiveness(
+            area_id=area_id,
+            room=room,
+            settings=settings,
+            mode=mode,
+            power_fraction=power_fraction,
+            current_temp=current_temp,
+            target_temp=targets.heat if mode == MODE_HEATING else targets.cool,
+            controllable=climate_active and not window_open and not force_off,
+        )
+
         return self._build_room_state_dict(
             area_id=area_id,
             room=room,
@@ -1264,9 +1366,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Apply during active conditioning, and in setback idle where the
             # device keeps blowing (so it can drop to Mute once at/below target).
             device_active = (
-                mode in (MODE_COOLING, MODE_HEATING)
-                and eid not in cycling_eids
-                and eid not in compressor_forced_off
+                mode in (MODE_COOLING, MODE_HEATING) and eid not in cycling_eids and eid not in compressor_forced_off
             )
             idle_action, _ = get_idle_action(devices, eid)
             idle_setback = mode == MODE_IDLE and idle_action == IDLE_ACTION_SETBACK
@@ -2112,6 +2212,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Clean up in-memory state
         self._window_manager.remove_room(area_id)
         self._previous_modes.pop(area_id, None)
+        self._watchdog.reset(area_id)
+        self._watchdog_alerted.discard(area_id)
         self._last_valid_temps.pop(area_id, None)
         self._had_valid_temp.discard(area_id)
         self._startup_guard_warned.discard(area_id)

@@ -367,6 +367,8 @@
   "settings.outdoor_unavailable_notify_hint": "Afficher une notification Home Assistant lorsqu'aucun des capteurs extérieurs ni l'entité météo n'a signalé de température pendant 30 minutes. Pendant ce temps, RoomMind met en pause l'apprentissage du modèle thermique pour éviter la corruption.",
   "settings.prediction_enabled": "Prédiction de température",
   "settings.prediction_enabled_hint": "Afficher la tendance de température prédite dans les graphiques d'analyse. A désactiver si vous constatez de mauvaises performances.",
+  "settings.effectiveness_watchdog": "Surveiller les appareils sans effet",
+  "settings.effectiveness_watchdog_hint": "Notifier lorsqu'une pièce chauffe ou refroidit à pleine puissance pendant 20 minutes sans que la température bouge. RoomMind éteint puis rallume d'abord les climatiseurs — un appareil peut signaler le bon mode alors que son compresseur ne démarre jamais — et envoie une notification si cela ne suffit pas.",
   "vacation.title": "Mode vacances",
   "vacation.hint": "Règle toutes les pièces sur une température réduite jusqu'à la date de fin.",
   "vacation.active_label": "Mode vacances actif",

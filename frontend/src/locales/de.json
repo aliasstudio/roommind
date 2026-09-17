@@ -367,6 +367,8 @@
   "settings.outdoor_unavailable_notify_hint": "Zeigt eine Home-Assistant-Benachrichtigung, wenn weder Außensensor noch Wetter-Entity 30 Minuten lang eine Temperatur geliefert haben. In dieser Zeit pausiert RoomMind das Lernen des thermischen Modells, um Korruption zu vermeiden.",
   "settings.prediction_enabled": "Temperaturvorhersage",
   "settings.prediction_enabled_hint": "Zeigt den vorhergesagten Temperaturverlauf im Analyse-Diagramm. Bei langsamer Performance deaktivieren.",
+  "settings.effectiveness_watchdog": "Auf wirkungslose Geräte achten",
+  "settings.effectiveness_watchdog_hint": "Benachrichtigen, wenn ein Raum 20 Minuten lang mit voller Leistung heizt oder kühlt, ohne dass sich die Temperatur bewegt. RoomMind schaltet die Klimageräte zuerst aus und wieder ein — ein Gerät kann den richtigen Modus melden, während der Kompressor nie anläuft — und meldet sich, wenn das nicht hilft.",
   "vacation.title": "Urlaubsmodus",
   "vacation.hint": "Setzt alle Räume auf eine Absenktemperatur bis zum Enddatum.",
   "vacation.active_label": "Urlaubsmodus aktiv",
