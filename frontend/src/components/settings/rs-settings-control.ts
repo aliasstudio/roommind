@@ -29,6 +29,7 @@ export class RsSettingsControl extends RsSettingsBase {
   @property({ type: Number }) public outdoorCoolingMin = 16;
   @property({ type: Number }) public outdoorHeatingMax = 22;
   @property({ type: Boolean }) public predictionEnabled = true;
+  @property({ type: Boolean }) public effectivenessWatchdogEnabled = true;
   @property({ type: String }) public scheduleOffAction: "eco" | "off" = "eco";
 
   render() {
@@ -145,6 +146,20 @@ export class RsSettingsControl extends RsSettingsBase {
             .checked=${this.predictionEnabled}
             @change=${(e: Event) =>
               this._fire("predictionEnabled", (e.target as HTMLInputElement).checked)}
+          ></ha-switch>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="toggle-row">
+          <div class="toggle-text">
+            <span class="toggle-label">${localize("settings.effectiveness_watchdog", l)}</span>
+            <span class="toggle-hint">${localize("settings.effectiveness_watchdog_hint", l)}</span>
+          </div>
+          <ha-switch
+            .checked=${this.effectivenessWatchdogEnabled}
+            @change=${(e: Event) =>
+              this._fire("effectivenessWatchdogEnabled", (e.target as HTMLInputElement).checked)}
           ></ha-switch>
         </div>
       </div>

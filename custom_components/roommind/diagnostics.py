@@ -206,6 +206,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: 
             on_since = coordinator._mode_on_since.get(area_id)
             if on_since is not None:
                 live_diag["mode_active_for_s"] = round(time.time() - on_since)
+            watchdog = coordinator._watchdog.get_state(area_id, live.get("current_temp"))
+            live_diag["watchdog_stalled"] = watchdog.stalled
+            live_diag["watchdog_stalled_for_s"] = watchdog.stalled_for_s
+            live_diag["watchdog_progress_c"] = watchdog.progress_c
             cached = coordinator._last_valid_temps.get(area_id)
             if cached is not None:
                 live_diag["cached_temp"] = cached[0]
