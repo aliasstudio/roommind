@@ -40,6 +40,7 @@ from ..const import (
 )
 from ..utils.device_utils import (
     DEFAULT_IDLE_SETBACK_OFFSET,
+    DEVICE_TYPE_TRV,
     IDLE_ACTION_FAN_ONLY,
     IDLE_ACTION_LOW,
     IDLE_ACTION_OFF,
@@ -48,6 +49,7 @@ from ..utils.device_utils import (
     get_active_fan_mode,
     get_direct_setpoint_eids,
     get_idle_action,
+    apply_idle_override,
     get_trv_eids,
     has_reliable_hvac_modes,
 )
@@ -810,6 +812,9 @@ class MPCController:
 
         s = settings or {}
         self.heating_season = s.get("heating_season", DEFAULT_HEATING_SEASON)
+        if not self.heating_season:
+            # Out of season TRVs are switched off, whatever idle action the schedule asks for.
+            self._devices = apply_idle_override(self._devices, {DEVICE_TYPE_TRV: {"idle_action": IDLE_ACTION_OFF}})
         self.outdoor_cooling_min = s.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
         self.outdoor_heating_max = s.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX)
 

@@ -691,6 +691,33 @@ async def test_idle_outdoor_hot_gate_respects_trv_low(idle_action: str, expect_o
     assert any(c[0][1] == "set_temperature" and c[0][2]["temperature"] == 4.0 for c in calls)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("heating_season", "expect_off"), [(True, False), (False, True)])
+async def test_off_season_turns_low_trv_off(heating_season: bool, expect_off: bool):
+    """Out of season a "low" TRV is switched off; in season it stays at min_temp."""
+    hass = build_hass()
+    state = MagicMock()
+    state.state = "heat"
+    state.attributes = {"hvac_modes": ["off", "heat"], "min_temp": 4.0, "max_temp": 35.0, "temperature": 21.0}
+    hass.states.get = MagicMock(return_value=state)
+
+    room = make_room()
+    room["devices"][0]["idle_action"] = "low"
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={"heating_season": heating_season},
+        has_external_sensor=True,
+    )
+    await ctrl.async_apply("idle", 21.0)
+
+    calls = hass.services.async_call.call_args_list
+    off_calls = [c for c in calls if c[0][1] == "set_hvac_mode" and c[0][2].get("hvac_mode") == "off"]
+    assert bool(off_calls) == expect_off
+
+
 # ---------------------------------------------------------------------------
 # async_apply: AC heating behavior
 # ---------------------------------------------------------------------------
