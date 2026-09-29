@@ -14,6 +14,7 @@ DETAIL_FIELDS = [
     "room_temp",
     "outdoor_temp",
     "target_temp",
+    "target_side",
     "mode",
     "predicted_temp",
     "humidity",
@@ -82,6 +83,7 @@ class HistoryStore:
                     "room_temp": data.get("room_temp", ""),
                     "outdoor_temp": data.get("outdoor_temp", ""),
                     "target_temp": data.get("target_temp", ""),
+                    "target_side": data.get("target_side", ""),
                     "mode": data.get("mode", ""),
                     "predicted_temp": data.get("predicted_temp", ""),
                     "humidity": data.get("humidity", ""),
@@ -205,6 +207,7 @@ class HistoryStore:
             avg_row = {
                 "timestamp": bucket_key * bucket_seconds,
                 "mode": bucket[0]["mode"],
+                "target_side": bucket[0].get("target_side", ""),
                 "window_open": bucket[0].get("window_open", ""),
                 "dehumidifying": bucket[0].get("dehumidifying", ""),
                 "device_setpoint": bucket[0].get("device_setpoint", ""),

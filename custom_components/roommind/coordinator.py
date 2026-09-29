@@ -360,6 +360,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "room_temp": rs.get("current_temp_raw", current_temp),
                             "outdoor_temp": self.outdoor_temp_effective,
                             "target_temp": target_temp,
+                            "target_side": rs.get("target_side", ""),
                             "mode": mode,
                             "predicted_temp": predicted,
                             "humidity": rs.get("current_humidity"),
@@ -882,16 +883,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Compute effective single target_temp for display/history (mode + climate_mode aware)
         climate_mode = room.get("climate_mode", "auto")
         if climate_mode == CLIMATE_MODE_COOL_ONLY:
-            target_temp = targets.cool
+            target_side = "cool"
         elif climate_mode == CLIMATE_MODE_HEAT_ONLY:
-            target_temp = targets.heat
-        else:  # auto
-            if mode == MODE_HEATING and targets.heat is not None:
-                target_temp = targets.heat
-            elif mode == MODE_COOLING and targets.cool is not None:
-                target_temp = targets.cool
-            else:
-                target_temp = targets.heat if targets.heat is not None else targets.cool
+            target_side = "heat"
+        elif mode == MODE_HEATING and targets.heat is not None:
+            target_side = "heat"
+        elif mode == MODE_COOLING and targets.cool is not None:
+            target_side = "cool"
+        else:
+            target_side = "heat" if targets.heat is not None else "cool"
+        target_temp = targets.heat if target_side == "heat" else targets.cool
 
         # Force idle when target resolved to "off" (presence away or schedule off)
         if force_off:
@@ -1285,6 +1286,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             current_temp_raw=current_temp_raw,
             current_humidity=current_humidity,
             target_temp=target_temp,
+            target_side=target_side,
             targets=targets,
             schedule_temp_warnings=schedule_temp_warnings,
             display_mode=display_mode,
@@ -1751,6 +1753,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         current_temp_raw: float | None,
         current_humidity: float | None,
         target_temp: float | None,
+        target_side: str,
         targets: TargetTemps,
         schedule_temp_warnings: list[dict[str, Any]],
         display_mode: str,
@@ -1799,6 +1802,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "current_temp_raw": current_temp_raw,
             "current_humidity": current_humidity,
             "target_temp": target_temp,
+            "target_side": target_side if target_temp is not None else "",
             "heat_target": targets.heat,
             "cool_target": targets.cool,
             "schedule_temp_warnings": schedule_temp_warnings,

@@ -402,6 +402,8 @@
   "analytics.dehumidify_threshold": "Start",
   "analytics.dehumidify_target": "Ziel",
   "analytics.target": "Ziel",
+  "analytics.target_heat": "Ziel (Heizen)",
+  "analytics.target_cool": "Ziel (Kühlen)",
   "analytics.prediction": "Vorhersage",
   "analytics.outdoor": "Außen",
   "analytics.model_status": "Modellstatus",

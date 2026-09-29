@@ -37,6 +37,7 @@ NORMAL_ROOM_KEYS = {
     "current_temp_raw",
     "current_humidity",
     "target_temp",
+    "target_side",
     "heat_target",
     "cool_target",
     "schedule_temp_warnings",

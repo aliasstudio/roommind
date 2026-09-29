@@ -63,6 +63,7 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
                 "room_temp": _safe_float(row.get("room_temp", "")),
                 "outdoor_temp": _safe_float(row.get("outdoor_temp", "")),
                 "target_temp": _safe_float(row.get("target_temp", "")),
+                "target_side": row.get("target_side", "") or None,
                 "mode": row.get("mode", ""),
                 "predicted_temp": _safe_float(row.get("predicted_temp", "")),
                 "humidity": _safe_float(row.get("humidity", "")),
@@ -152,18 +153,15 @@ async def _compute_target_forecast(
             heat_target = round(eco_heat + mold_prevention_delta, 1)
 
         # Chart display: mode-aware single value
-        if climate_mode == CLIMATE_MODE_COOL_ONLY:
-            target = cool_target
-        elif climate_mode == CLIMATE_MODE_HEAT_ONLY:
-            target = heat_target
-        else:
-            # Auto mode: show heat target (primary for chart line)
-            target = heat_target
+        # Auto mode shows the heat target (primary for chart line)
+        target_side = "cool" if climate_mode == CLIMATE_MODE_COOL_ONLY else "heat"
+        target = cool_target if target_side == "cool" else heat_target
 
         result.append(
             {
                 "ts": round(ts, 1),
                 "target_temp": target,
+                "target_side": target_side if target is not None else None,
                 "heat_target": heat_target,
                 "cool_target": cool_target,
             }
@@ -378,6 +376,7 @@ async def build_analytics_data(
                 "room_temp": None,
                 "outdoor_temp": None,
                 "target_temp": tf["target_temp"],
+                "target_side": tf.get("target_side"),
                 "mode": "forecast",
                 "predicted_temp": pred_temps[i] if i < len(pred_temps) else None,
                 "window_open": False,
