@@ -320,6 +320,7 @@ export interface AnalyticsDataPoint {
   room_temp: number | null;
   outdoor_temp: number | null;
   target_temp: number | null;
+  target_side?: "heat" | "cool" | null;
   mode: string;
   predicted_temp: number | null;
   humidity?: number | null;

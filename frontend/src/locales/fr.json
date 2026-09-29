@@ -402,6 +402,8 @@
   "analytics.dehumidify_threshold": "Début",
   "analytics.dehumidify_target": "Cible",
   "analytics.target": "Cible",
+  "analytics.target_heat": "Cible (chauffage)",
+  "analytics.target_cool": "Cible (refroidissement)",
   "analytics.prediction": "Prédiction",
   "analytics.outdoor": "Extérieur",
   "analytics.model_status": "Statut du modèle",

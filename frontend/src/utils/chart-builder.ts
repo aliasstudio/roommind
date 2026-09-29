@@ -3,6 +3,7 @@
  */
 import type { AnalyticsDataPoint } from "../types";
 import { localize } from "./localize";
+import type { TranslationKey } from "./localize";
 import { formatTemp, tempUnit, toDisplay } from "./temperature";
 import type { HomeAssistant } from "../types";
 
@@ -87,6 +88,8 @@ export function rightAxisLayout(points: AnalyticsDataPoint[]): {
   };
 }
 
+type TargetSide = NonNullable<AnalyticsDataPoint["target_side"]> | "none";
+
 export function buildChartSeries(
   points: AnalyticsDataPoint[],
   ctx: ChartBuildContext,
@@ -95,7 +98,24 @@ export function buildChartSeries(
   const d = (c: number) => toDisplay(c, hass);
 
   const roomData: Array<[number, number]> = [];
-  const targetData: Array<[number, number]> = [];
+  const targetData: Record<TargetSide, Array<[number, number | null]>> = {
+    heat: [],
+    cool: [],
+    none: [],
+  };
+  let lastTarget: { side: TargetSide; value: number } | null = null;
+  // Splits the stepped target into per-side series: the outgoing side is held
+  // to the switch moment, then broken with null so only one side shows at a time.
+  const pushTarget = (ts: number, point: AnalyticsDataPoint): void => {
+    if (isOutdoor || point.target_temp === null) return;
+    const side = point.target_side ?? "none";
+    const value = d(point.target_temp);
+    if (lastTarget && lastTarget.side !== side) {
+      targetData[lastTarget.side].push([ts, lastTarget.value], [ts, null]);
+    }
+    targetData[side].push([ts, value]);
+    lastTarget = { side, value };
+  };
   const predictedData: Array<[number, number]> = [];
   const outdoorData: Array<[number, number]> = [];
   const deviceTargetData: Array<[number, number]> = [];
@@ -103,7 +123,7 @@ export function buildChartSeries(
   for (const p of points) {
     const ts = p.ts * 1000;
     if (p.room_temp !== null) roomData.push([ts, d(p.room_temp)]);
-    if (!isOutdoor && p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
+    pushTarget(ts, p);
     if (!isOutdoor && p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
     if (p.outdoor_temp !== null) outdoorData.push([ts, d(p.outdoor_temp)]);
     if (!isOutdoor && p.device_setpoint != null) deviceTargetData.push([ts, d(p.device_setpoint)]);
@@ -111,7 +131,7 @@ export function buildChartSeries(
 
   for (const p of forecast ?? []) {
     const ts = p.ts * 1000;
-    if (!isOutdoor && p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
+    pushTarget(ts, p);
     if (!isOutdoor && p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
   }
 
@@ -129,19 +149,26 @@ export function buildChartSeries(
     },
   ];
 
-  if (!isOutdoor) {
+  const targetSeries = [
+    // Legacy points recorded before target_side existed
+    { side: "none", id: "target_temp", name: "analytics.target", color: "rgb(76, 175, 80)" },
+    { side: "heat", id: "target_heat", name: "analytics.target_heat", color: "rgb(244, 67, 54)" },
+    { side: "cool", id: "target_cool", name: "analytics.target_cool", color: "rgb(63, 81, 181)" },
+  ] satisfies Array<{ side: TargetSide; id: string; name: TranslationKey; color: string }>;
+  for (const { side, id, name, color } of targetSeries) {
+    if (targetData[side].length === 0) continue;
     series.push({
-      id: "target_temp",
+      id,
       type: "line",
-      name: localize("analytics.target", l),
-      color: "rgb(76, 175, 80)",
-      data: targetData,
+      name: localize(name, l),
+      color,
+      data: targetData[side],
       showSymbol: false,
       smooth: false,
-      // Target is a held setpoint (schedule value, or whichever of
-      // heat/cool applies in auto mode), not a continuous quantity — a
-      // step avoids drawing a diagonal ramp across mode switches.
+      // Target is a held setpoint, not a continuous quantity — a step
+      // avoids drawing a diagonal ramp across schedule changes.
       step: "end",
+      connectNulls: false,
       lineStyle: { width: 2, type: "dashed" },
       yAxisIndex: 0,
     });

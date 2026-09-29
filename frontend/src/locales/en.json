@@ -402,6 +402,8 @@
   "analytics.dehumidify_threshold": "Start",
   "analytics.dehumidify_target": "Target",
   "analytics.target": "Target",
+  "analytics.target_heat": "Target (heat)",
+  "analytics.target_cool": "Target (cool)",
   "analytics.prediction": "Prediction",
   "analytics.outdoor": "Outdoor",
   "analytics.model_status": "Model Status",
