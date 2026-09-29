@@ -512,7 +512,8 @@ export function buildChartOptions(
     tooltip: {
       trigger: "axis",
       axisPointer: { snap: false },
-      valueFormatter: (v: number) => v.toFixed(1) + "\u00A0" + unit,
+      // Target series carry nulls where the other side (heat/cool) is active
+      valueFormatter: (v: number | null) => (v == null ? "" : v.toFixed(1) + "\u00A0" + unit),
       formatter: (
         params: Array<{
           seriesName: string;
