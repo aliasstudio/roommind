@@ -1821,8 +1821,15 @@ class MPCController:
                 # "fan_only" idle_action keeps hvac_mode=cool/heat, and the
                 # unit's own onboard thermostat could self-engage the compressor
                 # regardless of what RoomMind commands next cycle.
-                if (eid in self.acs and outdoor_cold_gate) or (eid in thermostats and outdoor_hot_gate):
+                if eid in self.acs and outdoor_cold_gate:
                     await async_turn_off_climate(self.hass, eid, area_id=self._area_id)
+                    continue
+                # A TRV idled "low" already sits at min_temp and cannot self-engage;
+                # force_off keeps that exemption instead of flipping it to off.
+                if eid in thermostats and outdoor_hot_gate:
+                    await async_idle_device(
+                        self.hass, eid, self._devices, area_id=self._area_id, targets=targets, force_off=True
+                    )
                     continue
                 await async_idle_device(
                     self.hass,
