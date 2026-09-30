@@ -153,9 +153,22 @@ export function buildChartSeries(
     // Legacy points recorded before target_side existed
     { side: "none", id: "target_temp", name: "analytics.target", color: "rgb(76, 175, 80)" },
     { side: "heat", id: "target_heat", name: "analytics.target_heat", color: "rgb(244, 67, 54)" },
-    { side: "cool", id: "target_cool", name: "analytics.target_cool", color: "rgb(63, 81, 181)" },
-  ] satisfies Array<{ side: TargetSide; id: string; name: TranslationKey; color: string }>;
-  for (const { side, id, name, color } of targetSeries) {
+    // Indigo is barely visible on a dark background — a white glow lifts it
+    {
+      side: "cool",
+      id: "target_cool",
+      name: "analytics.target_cool",
+      color: "rgb(63, 81, 181)",
+      glow: { shadowColor: "rgba(255, 255, 255, 0.9)", shadowBlur: 4 },
+    },
+  ] satisfies Array<{
+    side: TargetSide;
+    id: string;
+    name: TranslationKey;
+    color: string;
+    glow?: { shadowColor: string; shadowBlur: number };
+  }>;
+  for (const { side, id, name, color, glow } of targetSeries) {
     if (targetData[side].length === 0) continue;
     series.push({
       id,
@@ -169,7 +182,7 @@ export function buildChartSeries(
       // avoids drawing a diagonal ramp across schedule changes.
       step: "end",
       connectNulls: false,
-      lineStyle: { width: 2, type: "dashed" },
+      lineStyle: { width: 2, type: "dashed", ...glow },
       yAxisIndex: 0,
     });
   }
