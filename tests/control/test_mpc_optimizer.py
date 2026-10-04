@@ -873,3 +873,60 @@ def test_fan_cap_does_not_affect_heating():
     capped = opt.optimize(fan_efficiency_series=[0.4] * 12, **args)
     assert capped.actions == full.actions
     assert capped.temperatures == full.temperatures
+
+
+def test_holding_power_preserved_with_energy_bias_and_small_capacity():
+    """Holding power must not be zeroed out by energy_bias on small capacity systems."""
+    model = RCModel(
+        C=1.0,
+        U=0.014,
+        Q_heat=0.24,
+        Q_cool=4.0,
+        Q_internal=0.20,
+    )
+    opt = MPCOptimizer(
+        model=model,
+        w_comfort=4.0,
+        w_energy=6.0,
+        can_heat=True,
+        can_cool=False,
+        approach_rate=0.65,
+    )
+    pf, mode = opt.compute_optimal_power(
+        T_room=22.0,
+        T_outdoor=5.0,
+        target=22.0,
+        dt_minutes=5.0,
+    )
+    assert mode == MODE_HEATING
+    assert 0.1 <= pf <= 0.3  # gentle holding power (~15%), not 0 or 1.0
+
+
+def test_smooth_proportional_modulation_near_target():
+    """Near target, optimizer must modulate power smoothly instead of bang-bang 0/1."""
+    model = RCModel(
+        C=1.0,
+        U=0.014,
+        Q_heat=0.24,
+        Q_cool=4.0,
+        Q_internal=0.20,
+    )
+    opt = MPCOptimizer(
+        model=model,
+        w_comfort=4.0,
+        w_energy=6.0,
+        can_heat=True,
+        can_cool=False,
+        min_run_blocks=1,
+        approach_rate=0.65,
+    )
+    # At target - 0.05°C, pf should modulate between min and 1.0, never forced 1.0
+    plan = opt.optimize(
+        T_room=21.95,
+        T_outdoor_series=[5.0] * 12,
+        heat_target_series=[22.0] * 12,
+        dt_minutes=5.0,
+    )
+    assert plan.actions[0] == MODE_HEATING
+    assert MIN_POWER_FRACTION <= plan.power_fractions[0] < 1.0
+

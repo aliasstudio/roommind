@@ -638,7 +638,7 @@ MIN_HORIZON_HOURS = 2
 HORIZON_MULTIPLIER = 2.5
 DEFAULT_OUTDOOR_TEMP_FALLBACK = 10.0
 SAFETY_GUARD_MIN_BLOCKS = 6  # Minimum guard horizon (30 min floor)
-GUARD_PREDICTION_MARGIN = 0.2  # °C margin for prediction-based guard bypass
+GUARD_PREDICTION_MARGIN = 0.0  # °C margin for prediction-based guard bypass
 HARD_OVERSHOOT_CEILING = 1.0  # °C — model-independent max overshoot before forced idle
 
 
