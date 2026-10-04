@@ -203,7 +203,7 @@ class MPCOptimizer:
             if best_action == MODE_IDLE:
                 pf = 0.0
             elif best_action != MODE_IDLE and pf == 0.0:
-                pf = 1.0  # min_run_blocks enforcement: keep full power
+                pf = MIN_POWER_FRACTION  # Active mode: ensure at least minimum power
 
             # Apply action with proportional Q for accurate forward prediction
             if best_action == MODE_HEATING:
@@ -461,6 +461,13 @@ class MPCOptimizer:
             else:
                 T_drift += self.model.Q_occupancy * q_occupancy * dt_h
 
+        # Add always-on internal heat gain to drift
+        if self.model.Q_internal > 0:
+            if alpha > 0.01:
+                T_drift += beta * self.model.Q_internal / alpha
+            else:
+                T_drift += self.model.Q_internal * dt_h
+
         # Reference sub-target: close `approach_rate` of the remaining gap this block
         # instead of the whole gap (deadbeat). approach_rate=1.0 => T_ref == target =>
         # identical to the legacy formula. Smaller values widen the proportional band.
@@ -469,12 +476,25 @@ class MPCOptimizer:
         T_ref = T_room + self.approach_rate * (target - T_room)
         Q_required = (T_ref - T_drift) * alpha / beta
 
-        # Energy penalty: bias toward less power based on comfort/energy weights
-        energy_bias = (self.w_energy / max(self.w_comfort, 0.01)) * alpha / beta * 0.1
+        # Energy penalty: bias toward less power based on comfort/energy weights.
+        # Cap the equivalent temperature bias so large w_energy / w_comfort does not
+        # crush small heating/cooling systems or destroy holding power.
+        bias_temp = min((self.w_energy / max(self.w_comfort, 0.01)) * 0.1, 0.02)
+        energy_bias = bias_temp * alpha / beta
         if Q_required > 0:
-            Q_required = max(0.0, Q_required - energy_bias)
+            if T_room <= target:
+                Q_holding = (T_room - T_drift) * alpha / beta
+                Q_gap = Q_required - Q_holding
+                Q_required = Q_holding + max(0.0, Q_gap - energy_bias)
+            else:
+                Q_required = max(0.0, Q_required - energy_bias)
         elif Q_required < 0:
-            Q_required = min(0.0, Q_required + energy_bias)
+            if T_room >= target:
+                Q_holding = (T_room - T_drift) * alpha / beta
+                Q_gap = Q_required - Q_holding
+                Q_required = Q_holding + min(0.0, Q_gap + energy_bias)
+            else:
+                Q_required = min(0.0, Q_required + energy_bias)
 
         if Q_required > 0 and self.can_heat and not self._is_outdoor_gated(MODE_HEATING, T_outdoor):
             frac = min(Q_required / max(self.model.Q_heat, 0.01), 1.0)
