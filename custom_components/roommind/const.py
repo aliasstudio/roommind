@@ -90,6 +90,7 @@ AC_BOOST_DELTA_MIN = 3.0  # Tightest AC setpoint cap (°C above/below target) at
 AC_BOOST_DELTA_MAX = 50.0  # Comfort-end AC cap (°C); finite value above any real device range so the cap never binds (inf would break the linear slider interpolation)
 PROPORTIONAL_DEADBAND_C = 0.5  # Minimum proportional setpoint change (°C) to resend, in the gentle regime
 PROPORTIONAL_DEADBAND_NEAR_TARGET_C = 0.2  # Finer proportional deadband (°C) within 1°C of target
+PROPORTIONAL_BAND_MIN = 0.5  # °C minimum proportional band for smooth gap-closing without hair-trigger saturation
 # Anti-short-cycle: hysteresis on starting a fresh heat/cool run, scaled by comfort_weight.
 START_DEADBAND_MIN_C = 0.15  # Tightest start hysteresis (°C past target) at comfort_weight >= DEFAULT_COMFORT_WEIGHT
 START_DEADBAND_MAX_C = 0.95  # Widest start hysteresis (°C past target) at comfort_weight = 0 (full efficiency)
