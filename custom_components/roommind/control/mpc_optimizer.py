@@ -5,7 +5,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ..const import HEATING_SYSTEM_PROFILES, MIN_POWER_FRACTION, MODE_COOLING, MODE_HEATING, MODE_IDLE
+from ..const import (
+    HEATING_SYSTEM_PROFILES,
+    MIN_POWER_FRACTION,
+    MODE_COOLING,
+    MODE_HEATING,
+    MODE_IDLE,
+    PROPORTIONAL_BAND_MIN,
+)
 from .residual_heat import compute_residual_heat
 from .thermal_model import RCModel
 
@@ -484,15 +491,28 @@ class MPCOptimizer:
         if Q_required > 0:
             if T_room <= target:
                 Q_holding = (T_room - T_drift) * alpha / beta
-                Q_gap = Q_required - Q_holding
-                Q_required = Q_holding + max(0.0, Q_gap - energy_bias)
+                gap = target - T_room
+                headroom = max(self.model.Q_heat - Q_holding, 0.01)
+                band = max(
+                    headroom / max(self.approach_rate * (alpha / beta), 1e-4),
+                    PROPORTIONAL_BAND_MIN / self.approach_rate,
+                )
+                Q_gap = headroom * min(gap / band, 1.0)
+                Q_required = Q_holding + Q_gap
             else:
                 Q_required = max(0.0, Q_required - energy_bias)
         elif Q_required < 0:
+            available_cool = self.model.Q_cool * max(fan_efficiency, 0.0)
             if T_room >= target:
                 Q_holding = (T_room - T_drift) * alpha / beta
-                Q_gap = Q_required - Q_holding
-                Q_required = Q_holding + min(0.0, Q_gap + energy_bias)
+                gap = T_room - target
+                headroom = max(available_cool - abs(Q_holding), 0.01)
+                band = max(
+                    headroom / max(self.approach_rate * (alpha / beta), 1e-4),
+                    PROPORTIONAL_BAND_MIN / self.approach_rate,
+                )
+                Q_gap = headroom * min(gap / band, 1.0)
+                Q_required = Q_holding - Q_gap
             else:
                 Q_required = min(0.0, Q_required + energy_bias)
 
