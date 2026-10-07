@@ -227,6 +227,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._block_temp_warned: set[tuple[str, str, str]] = set()
         self._switch_entity_areas: set[str] = set()
         self._climate_control_switch_areas: set[str] = set()
+        self._ac_heating_switch_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
         self._climate_entity_areas: set[str] = set()
         # Per-entity cache of schedule blocks; fallback when schedule.get_schedule fails (#308)
@@ -2269,6 +2270,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self.async_add_switch_entities([RoomMindClimateControlSwitch(self, area_id)])
             self._climate_control_switch_areas.add(area_id)
 
+        if (
+            room.get("heat_source_orchestration")
+            and area_id not in self._ac_heating_switch_areas
+            and getattr(self, "async_add_switch_entities", None)
+        ):
+            from .switch import RoomMindAcHeatingSwitch
+
+            self.async_add_switch_entities([RoomMindAcHeatingSwitch(self, area_id)])
+            self._ac_heating_switch_areas.add(area_id)
+
         # Cover entities: only create when covers are configured.
         # Not removed on save — cleanup_orphaned_entities() handles that at startup
         # so brief config changes don't break user automations.
@@ -2332,6 +2343,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._off_since.pop(area_id, None)
         self._switch_entity_areas.discard(area_id)
         self._climate_control_switch_areas.discard(area_id)
+        self._ac_heating_switch_areas.discard(area_id)
         self._binary_sensor_entity_areas.discard(area_id)
         self._climate_entity_areas.discard(area_id)
         self._model_manager.remove_room(area_id)

@@ -211,6 +211,7 @@ export interface RoomConfig {
   heat_source_primary_delta?: number;
   heat_source_outdoor_threshold?: number;
   heat_source_ac_min_outdoor?: number;
+  heat_source_assist_percent?: number;
   climate_control_enabled?: boolean;
   live?: RoomLiveData;
 }

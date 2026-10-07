@@ -43,6 +43,9 @@ async def async_setup_entry(
     for area_id, room in rooms.items():
         entities.append(RoomMindClimateControlSwitch(coordinator, area_id))
         coordinator._climate_control_switch_areas.add(area_id)
+        if room.get("heat_source_orchestration"):
+            entities.append(RoomMindAcHeatingSwitch(coordinator, area_id))
+            coordinator._ac_heating_switch_areas.add(area_id)
         if room.get("covers"):
             entities.extend(_create_room_switches(coordinator, area_id))
             coordinator._switch_entity_areas.add(area_id)
@@ -109,6 +112,37 @@ class RoomMindClimateControlSwitch(CoordinatorEntity, SwitchEntity):
         store = self.coordinator.hass.data[DOMAIN]["store"]
         await store.async_update_room(self._area_id, {"climate_control_enabled": False})
         await self.coordinator.async_request_refresh()
+
+
+class RoomMindAcHeatingSwitch(CoordinatorEntity, SwitchEntity):
+    """Switch to let the AC take part in heat source orchestration (e.g. off at night for quiet)."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: RoomMindCoordinator, area_id: str) -> None:
+        super().__init__(coordinator)
+        self._area_id = area_id
+        self._attr_unique_id = f"{DOMAIN}_{area_id}_ac_heating"
+        self._attr_name = f"{area_id} AC Heating"
+        self._attr_icon = "mdi:heat-pump-outline"
+        self.entity_id = f"switch.{DOMAIN}_{area_id}_ac_heating"
+
+    @property
+    def is_on(self) -> bool:
+        store = self.coordinator.hass.data[DOMAIN]["store"]
+        room = store.get_room(self._area_id)
+        return bool(room.get("heat_source_ac_heating", True)) if room else True
+
+    async def _async_set(self, is_enabled: bool) -> None:
+        store = self.coordinator.hass.data[DOMAIN]["store"]
+        await store.async_update_room(self._area_id, {"heat_source_ac_heating": is_enabled})
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._async_set(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._async_set(False)
 
 
 class RoomMindVacationSwitch(CoordinatorEntity, SwitchEntity):

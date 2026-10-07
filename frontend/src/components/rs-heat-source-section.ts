@@ -12,6 +12,7 @@ export class RsHeatSourceSection extends LitElement {
   @property({ type: Number }) public primaryDelta = 1.5;
   @property({ type: Number }) public outdoorThreshold = 5.0;
   @property({ type: Number }) public acMinOutdoor = -15.0;
+  @property({ type: Number }) public assistPercent = 0;
   @property({ type: Boolean }) public editing = false;
 
   static styles = [
@@ -137,6 +138,8 @@ export class RsHeatSourceSection extends LitElement {
         >
         · ${localize("heat_source.ac_min_outdoor", lang)}:
         <strong>${this.acMinOutdoor}${localize("heat_source.ac_min_outdoor_suffix", lang)}</strong>
+        · ${localize("heat_source.assist_percent", lang)}:
+        <strong>${this.assistPercent}${localize("heat_source.assist_percent_suffix", lang)}</strong>
       </div>`;
     }
 
@@ -202,6 +205,16 @@ export class RsHeatSourceSection extends LitElement {
                 max: 5,
                 step: 1,
                 key: "heat_source_ac_min_outdoor",
+              })}
+              ${this._renderThresholdRow({
+                label: localize("heat_source.assist_percent", lang),
+                hint: localize("heat_source.assist_percent_hint", lang),
+                suffix: localize("heat_source.assist_percent_suffix", lang),
+                value: this.assistPercent,
+                min: 0,
+                max: 100,
+                step: 5,
+                key: "heat_source_assist_percent",
               })}
             </div>
           `

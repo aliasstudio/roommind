@@ -40,6 +40,7 @@ def _make_room(
     outdoor_threshold: float = DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     ac_min_outdoor: float = DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
     primary: str = DEFAULT_HEAT_SOURCE_PRIMARY,
+    assist_percent: int = 0,
 ) -> dict:
     trv_list = thermostats if thermostats is not None else ["climate.trv_1"]
     ac_list = acs if acs is not None else ["climate.ac_1"]
@@ -56,6 +57,7 @@ def _make_room(
         "heat_source_primary_delta": primary_delta,
         "heat_source_outdoor_threshold": outdoor_threshold,
         "heat_source_ac_min_outdoor": ac_min_outdoor,
+        "heat_source_assist_percent": assist_percent,
     }
 
 
@@ -399,3 +401,36 @@ class TestConfigurablePrimarySource:
         # below the threshold, so the AC keeps it.
         result = evaluate_heat_sources(room, MODE_HEATING, 0.6, 20.5, 21.0, 4.8, "primary", hass)
         assert next(c for c in result.commands if c.active).device_type == "ac"
+
+
+class TestAssistShare:
+    """Idle source runs at a share of the lead power when configured."""
+
+    def test_radiator_assists_ac_lead(self):
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room(primary="ac", outdoor_threshold=-20.0, assist_percent=30)
+        plan = evaluate_heat_sources(room, MODE_HEATING, 0.8, 21.0, 22.0, 0.0, "none", hass)
+        by_type = {cmd.device_type: cmd for cmd in plan.commands}
+        assert plan.active_sources == "primary"
+        assert (by_type["ac"].active, by_type["ac"].power_fraction) == (True, 0.8)
+        assert (by_type["thermostat"].active, by_type["thermostat"].power_fraction) == (True, 0.24)
+        assert by_type["thermostat"].reason == "assist"
+
+    def test_no_assist_when_ac_cut_off(self):
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room(primary="ac", outdoor_threshold=-20.0, ac_min_outdoor=-10.0, assist_percent=30)
+        plan = evaluate_heat_sources(room, MODE_HEATING, 0.8, 21.0, 22.0, -15.0, "none", hass)
+        assert [(cmd.device_type, cmd.power_fraction) for cmd in plan.commands] == [("thermostat", 0.8)]
+
+    def test_no_assist_at_target(self):
+        hass = _make_hass(["heat", "cool"])
+        room = _make_room(primary="ac", assist_percent=30)
+        plan = evaluate_heat_sources(room, MODE_HEATING, 0.0, 22.0, 22.0, 0.0, "none", hass)
+        assert not any(cmd.active for cmd in plan.commands)
+
+    def test_ac_heating_switched_off_leaves_radiator_alone(self):
+        hass = _make_hass(["heat", "cool"])
+        room = {**_make_room(primary="ac", assist_percent=30), "heat_source_ac_heating": False}
+        plan = evaluate_heat_sources(room, MODE_HEATING, 0.8, 21.0, 22.0, 10.0, "none", hass)
+        assert [(cmd.device_type, cmd.power_fraction) for cmd in plan.commands] == [("thermostat", 0.8)]
+        assert plan.reason.startswith("AC heating switched off")
