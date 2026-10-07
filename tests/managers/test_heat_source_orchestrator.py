@@ -216,14 +216,15 @@ class TestEvaluateHeatSources:
         # AC can't heat, falls back to primary only
         assert result.active_sources == "primary"
 
-    def test_delta_at_zero_returns_none_active(self):
-        """When already at or above target, active_sources should be 'none'."""
+    def test_at_target_keeps_lead_running_on_holding_power(self):
+        """Heating at target is the MPC's call: the orchestrator must not cut it off,
+        or sensor noise around target short-cycles the compressor."""
         hass = _make_hass(["heat", "cool"])
-        room = _make_room()
-        result = evaluate_heat_sources(room, MODE_HEATING, 0.6, 21.0, 21.0, 10.0, "none", hass)
-
-        assert isinstance(result, HeatSourcePlan)
-        assert result.active_sources == "none"
+        room = _make_room(primary="ac", outdoor_threshold=-20.0)
+        for current_temp in (23.4, 23.5, 23.6):
+            plan = evaluate_heat_sources(room, MODE_HEATING, 0.3, current_temp, 23.5, 0.0, "primary", hass)
+            ac = next(cmd for cmd in plan.commands if cmd.device_type == "ac")
+            assert (ac.active, ac.power_fraction) == (True, 0.3)
 
     def test_multiple_devices_per_type(self):
         """Multiple thermostats and ACs should all get commands."""
@@ -426,7 +427,7 @@ class TestAssistShare:
         hass = _make_hass(["heat", "cool"])
         room = _make_room(primary="ac", assist_percent=30)
         plan = evaluate_heat_sources(room, MODE_HEATING, 0.0, 22.0, 22.0, 0.0, "none", hass)
-        assert not any(cmd.active for cmd in plan.commands)
+        assert not any(cmd.reason == "assist" for cmd in plan.commands)
 
     def test_ac_heating_switched_off_leaves_radiator_alone(self):
         hass = _make_hass(["heat", "cool"])
