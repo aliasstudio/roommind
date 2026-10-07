@@ -126,39 +126,6 @@ def evaluate_heat_sources(
     ac_group = "primary" if ac_is_primary else "secondary"
     trv_group = "secondary" if ac_is_primary else "primary"
 
-    # Early exit: at or above target, no heating needed
-    if delta_t <= 0:
-        idle_cmds: list[DeviceCommand] = []
-        for eid, device_type in primary_devices:
-            idle_cmds.append(
-                DeviceCommand(
-                    entity_id=eid,
-                    role="primary",
-                    device_type=device_type,
-                    active=False,
-                    power_fraction=0.0,
-                    reason="not selected",
-                )
-            )
-        for eid, device_type in secondary_devices:
-            idle_cmds.append(
-                DeviceCommand(
-                    entity_id=eid,
-                    role="secondary",
-                    device_type=device_type,
-                    active=False,
-                    power_fraction=0.0,
-                    reason="not selected",
-                )
-            )
-        _LOGGER.debug(
-            "Room '%s': heat source orchestration → none (delta_t=%.1f, outdoor=%s)",
-            room_config.get("area_id", "?"),
-            delta_t,
-            outdoor_temp,
-        )
-        return HeatSourcePlan(commands=idle_cmds, active_sources="none", reason="delta_t <= 0")
-
     # Hardware protection: disable AC heating in extreme cold
     is_ac_too_cold = outdoor_temp is not None and outdoor_temp < ac_min_outdoor
     ac_disabled = is_ac_too_cold or not room_config.get("heat_source_ac_heating", True)
