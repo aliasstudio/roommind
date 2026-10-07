@@ -426,6 +426,7 @@ async def test_save_room_defaults_heat_source_orchestration(store):
     assert room["heat_source_primary_delta"] == 1.5
     assert room["heat_source_outdoor_threshold"] == 5.0
     assert room["heat_source_ac_min_outdoor"] == -15.0
+    assert room["heat_source_ac_heating"] is True
 
 
 @pytest.mark.asyncio

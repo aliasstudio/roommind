@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant
 
 from ..const import (
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
+    DEFAULT_HEAT_SOURCE_ASSIST_PERCENT,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     DEFAULT_HEAT_SOURCE_PRIMARY,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
@@ -112,6 +113,7 @@ def evaluate_heat_sources(
     primary_delta = room_config.get("heat_source_primary_delta", DEFAULT_HEAT_SOURCE_PRIMARY_DELTA)
     outdoor_threshold = room_config.get("heat_source_outdoor_threshold", DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD)
     ac_min_outdoor = room_config.get("heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR)
+    assist_share = room_config.get("heat_source_assist_percent", DEFAULT_HEAT_SOURCE_ASSIST_PERCENT) / 100
 
     delta_t = target_temp - current_temp
 
@@ -158,7 +160,8 @@ def evaluate_heat_sources(
         return HeatSourcePlan(commands=idle_cmds, active_sources="none", reason="delta_t <= 0")
 
     # Hardware protection: disable AC heating in extreme cold
-    ac_disabled = outdoor_temp is not None and outdoor_temp < ac_min_outdoor
+    is_ac_too_cold = outdoor_temp is not None and outdoor_temp < ac_min_outdoor
+    ac_disabled = is_ac_too_cold or not room_config.get("heat_source_ac_heating", True)
     if ac_disabled:
         # Remove ACs from both lists, they cannot heat
         primary_devices = [(eid, dt) for eid, dt in primary_devices if dt != "ac"]
@@ -220,8 +223,10 @@ def evaluate_heat_sources(
     commands: list[DeviceCommand] = []
     reason_parts: list[str] = []
 
-    if ac_disabled and active != "none":
+    if is_ac_too_cold and active != "none":
         reason_parts.append(f"AC disabled (outdoor {outdoor_temp}°C < {ac_min_outdoor}°C)")
+    elif ac_disabled and active != "none":
+        reason_parts.append("AC heating switched off")
 
     if active == "both":
         reason_parts.append(f"large gap ({delta_t:.1f}°C)")
@@ -230,37 +235,28 @@ def evaluate_heat_sources(
         lead = "AC" if active == ac_group else "boiler"
         reason_parts.append(f"{lead} preferred ({delta_t:.1f}°C gap, outdoor {outdoor_str})")
 
-    for eid, device_type in primary_devices:
-        is_active = active in ("primary", "both")
-        pf = power_fraction if is_active else 0.0
-        commands.append(
-            DeviceCommand(
-                entity_id=eid,
-                role="primary",
-                device_type=device_type,
-                active=is_active,
-                power_fraction=pf,
-                reason="active" if is_active else "not selected",
-            )
-        )
+    def group_fraction(group: str) -> float:
+        if active == "both" and group == "secondary":
+            return round(power_fraction * HEAT_SOURCE_SECONDARY_POWER_SCALE, 2)
+        if active in (group, "both"):
+            return power_fraction
+        # Idle group assists the lead one when a share is configured
+        return round(power_fraction * assist_share, 2) if active != "none" else 0.0
 
-    for eid, device_type in secondary_devices:
-        is_active = active in ("secondary", "both")
-        pf = power_fraction
-        if active == "both":
-            pf = round(power_fraction * HEAT_SOURCE_SECONDARY_POWER_SCALE, 2)
-        if not is_active:
-            pf = 0.0
-        commands.append(
-            DeviceCommand(
-                entity_id=eid,
-                role="secondary",
-                device_type=device_type,
-                active=is_active,
-                power_fraction=pf,
-                reason="active" if is_active else "not selected",
+    for group, devices in (("primary", primary_devices), ("secondary", secondary_devices)):
+        fraction = group_fraction(group)
+        is_selected = active in (group, "both")
+        for eid, device_type in devices:
+            commands.append(
+                DeviceCommand(
+                    entity_id=eid,
+                    role=group,
+                    device_type=device_type,
+                    active=is_selected or fraction > 0,
+                    power_fraction=fraction,
+                    reason="active" if is_selected else ("assist" if fraction > 0 else "not selected"),
+                )
             )
-        )
 
     reason = "; ".join(reason_parts) if reason_parts else active
 

@@ -204,6 +204,7 @@ DEFAULT_HEAT_SOURCE_PRIMARY = HEAT_SOURCE_PRIMARY_TRV
 DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap that engages both sources (× the multiplier below)
 DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD = 5.0  # °C outdoor: above = prefer AC, below = prefer boiler
 DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR = -15.0  # °C hard-disable AC heating below this
+DEFAULT_HEAT_SOURCE_ASSIST_PERCENT = 0  # % of lead power the idle source runs at alongside it
 HEAT_SOURCE_HYSTERESIS = 0.3  # °C hysteresis band to prevent oscillation
 HEAT_SOURCE_LARGE_GAP_MULTIPLIER = 2.0  # activate both sources when gap > primary_delta * this
 HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (prevent overshoot)
@@ -274,6 +275,7 @@ def build_override_live(room: dict, suppressed: bool = False) -> dict:
         "override_until": room.get("override_until") if active else None,
         "override_suppressed": active and suppressed,
     }
+
 
 # Direct valve regulation (Sonoff TRVZB & friends): RoomMind writes the valve
 # opening degree itself instead of faking a proportional setpoint.
