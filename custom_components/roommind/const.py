@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import Context
 
 DOMAIN = "roommind"
-VERSION = "1.7.7"
+VERSION = "1.7.8"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -30,6 +30,9 @@ OVERRIDE_TYPES = [OVERRIDE_BOOST, OVERRIDE_ECO, OVERRIDE_TURBO, OVERRIDE_CUSTOM]
 
 # Cooling target stored for a turbo override when no AC reports a min_temp.
 DEFAULT_TURBO_COOL = 16.0
+# Grace period after the override entity is switched on before the seeded
+# override is evaluated; the caller's real targets normally arrive within it (#447).
+OVERRIDE_TURN_ON_REFRESH_DELAY_S = 3.0
 
 # Room modes
 MODE_IDLE = "idle"
@@ -95,6 +98,7 @@ PROPORTIONAL_BAND_MIN = 0.5  # °C minimum proportional band for smooth gap-clos
 START_DEADBAND_MIN_C = 0.15  # Tightest start hysteresis (°C past target) at comfort_weight >= DEFAULT_COMFORT_WEIGHT
 START_DEADBAND_MAX_C = 0.95  # Widest start hysteresis (°C past target) at comfort_weight = 0 (full efficiency)
 MIN_OFF_MINUTES = 10  # Minimum idle time before a compressor may restart (symmetric to min-run)
+BOOST_CAP_FALLBACK_STEP = 0.5  # Distance kept below a device's max_temp for proportional heating setpoints when it reports no target_temp_step (#396)
 
 # Update interval in seconds
 UPDATE_INTERVAL = 30
@@ -212,6 +216,19 @@ HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (
 # Compressor group defaults
 DEFAULT_COMPRESSOR_MIN_RUN_MINUTES = 15
 DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
+# Devices without usable state (IR blasters) get an unchanged command once more after this long.
+# Long enough that it is not audible as a beep pattern (#416), short enough to heal a lost frame,
+# a change on the remote or a restarted device within one comfortable stretch.
+COMMAND_CACHE_REASSERT_SECONDS = 1800
+# A resolved target that moved by more than this since the last active command is a deliberate change (°C)
+COMPRESSOR_HOLD_RETARGET_TOLERANCE = 0.05
+# Compressor hold: a heating unit keeps its boost until the room is this far above the heating target
+# (and at least at the cooling target), the cooling side mirrored. With single-point targets (heat == cool)
+# the margin keeps "target reached" from ending the hold; 0.5 K is a typical sensor/setpoint resolution.
+HOLD_OVERSHOOT_MARGIN = 0.5
+COMPRESSOR_STATE_SETTLE_SECONDS = (
+    120  # An "off" reading this soon after our own start is state lag, not a manual switch-off
+)
 
 # Compressor group master device — conflict resolution strategies
 CONFLICT_RESOLUTION_HEATING_PRIORITY = "heating_priority"

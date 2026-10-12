@@ -49,6 +49,8 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             "fan_control": dev.get("fan_control", "off"),
             "fan_min_mode": dev.get("fan_min_mode", ""),
             "fan_max_mode": dev.get("fan_max_mode", ""),
+            "setpoint_mode": dev.get("setpoint_mode", "proportional"),
+            "setpoint_offset": dev.get("setpoint_offset", 0.0),
             "coil_dry": dev.get("coil_dry", "inherit"),
             "coil_dry_minutes": dev.get("coil_dry_minutes", 0),
             "coil_dry_mode": dev.get("coil_dry_mode", ""),
