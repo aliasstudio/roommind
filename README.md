@@ -24,13 +24,14 @@
 - **Ignore Presence per Room** - Rooms can opt out of presence detection to always follow their schedule.
 - **Vacation Mode** - Global setback temperature with end date for all rooms.
 - **Window/Door Pause** - Pauses climate control when windows or doors are open, with configurable open/close delays.
+  After a restart, RoomMind waits until the window sensors report a state (at most 5 minutes; a sensor that is still unavailable then counts as closed). A sensor that no longer exists at all (deleted or renamed) counts as closed right away once Home Assistant has finished starting, with a warning in the log. A sensor that drops out briefly keeps its last state.
 - **Mold Risk Detection & Prevention** - Surface humidity estimation using the DIN 4108-2 method. Configurable notifications and automatic temperature raise to prevent mold growth.
 - **Automatic Blind/Cover Shading** - Smart cover deployment based on predicted solar overheating. Includes night close, manual override detection, and cover schedules.
 - **Valve Protection** - Periodic cycling of idle TRV valves to prevent seizing and calcification.
 - **Heat Source Orchestration** - Rooms with both TRVs and ACs automatically route heating demand to the most efficient device based on temperature gap and outdoor conditions.
-- **Compressor Group Protection** - Define groups of climate devices sharing an outdoor compressor. Enforces minimum run and off times to prevent short-cycling.
+- **Compressor Group Protection** - Define groups of climate devices sharing an outdoor compressor. Enforces minimum run and off times to prevent short-cycling. Until `min_run_minutes` has elapsed, a device keeps its last active setpoint, including a boost setpoint, so the room can overshoot its target further than without protection. A target that changes on purpose in the meantime (override, vacation, schedule off, presence) is passed on to the device right away (a device with a single heat/cool setpoint only when that cannot push the room the wrong way).
 - **Fan-only & Setback Idle Modes** - AC and heat pump devices can switch to fan-only or setback mode instead of turning off, keeping air circulation or low-load operation active.
-- **Per-Device Setpoint Mode** - Choose proportional (boost setpoint) or direct (exact target) control per device for optimal results with different hardware.
+- **Per-Device Setpoint Mode** - Choose proportional (boost setpoint) or direct (exact target) control per device for optimal results with different hardware. For direct devices whose internal sensor reads differently from your room sensor, a setpoint offset shifts the temperature sent to the device.
 - **Separate Heat/Cool Targets** - Independent comfort and eco temperatures for heating and cooling in auto mode, creating a natural dead-band.
 - **Per-Room Climate Toggle** - Disable climate control for individual rooms while keeping other rooms active.
 - **Outdoor Areas** - Mark rooms as outdoor (e.g. balcony) to disable climate control while keeping monitoring.
@@ -120,7 +121,9 @@ These can be used in HA automations, dashboards, or other integrations.
 
 **MPC shows "learning" for a long time** - The model needs ~60 idle and ~20 heating/cooling observations. This can take a few days for rooms that heat rarely. Check progress in the Analytics tab.
 
-**Room not heating/cooling when expected** - Check outdoor gating thresholds in Settings > Control. Default: no cooling below 16 C, no heating above 22 C.
+**Room not heating/cooling when expected** - Check outdoor gating thresholds in Settings > Control. Default: no cooling below 16 C, no heating above 22 C. An active manual override ignores these limits.
+
+**Override entity switched on without a temperature** - Turning `climate.roommind_{area_id}_override` on creates an override from the targets currently in force. Because an override ignores the outdoor limits, RoomMind waits 3 seconds for the follow-up temperature before acting on it; a repeated `turn_on` within that time does not shorten the wait. Reloading the integration within those 3 seconds drops the wait, and the seeded targets are then used right away, as for a plain `turn_on` without a follow-up temperature.
 
 **Thermal model seems wrong after room changes** - If you've changed insulation, radiators, or moved sensors, reset the model in Settings > Reset Thermal Data.
 

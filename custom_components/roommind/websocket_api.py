@@ -14,13 +14,9 @@ from homeassistant.core import HomeAssistant, callback
 from .const import (
     CLIMATE_MODES,
     CONFLICT_RESOLUTIONS,
-    DEFAULT_COMFORT_COOL,
-    DEFAULT_COMFORT_HEAT,
     DEFAULT_COMPRESSOR_MIN_OFF_MINUTES,
     DEFAULT_COMPRESSOR_MIN_RUN_MINUTES,
     DEFAULT_CONFLICT_RESOLUTION,
-    DEFAULT_ECO_COOL,
-    DEFAULT_ECO_HEAT,
     DEFAULT_HEATING_SEASON,
     DEFAULT_TURBO_COOL,
     DEFAULT_VALVE_DEADBAND,
@@ -30,6 +26,8 @@ from .const import (
     DOMAIN,
     HEAT_SOURCE_PRIMARIES,
     IDLE_ACTIONS,
+    OVERRIDE_CUSTOM,
+    OVERRIDE_TURBO,
     OVERRIDE_TYPES,
     build_override_live,
     is_override_suppressed,
@@ -52,8 +50,10 @@ from .utils.device_utils import (
     DEFAULT_COIL_DRY_MINUTES,
     SETPOINT_MODE_VALVE,
     SETPOINT_MODES,
+    SETPOINT_OFFSET_MAX,
+    SETPOINT_OFFSET_MIN,
 )
-from .utils.schedule_utils import WEEKDAYS, normalize_time
+from .utils.schedule_utils import WEEKDAYS, mask_override_band, normalize_time, override_preset_band
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -492,6 +492,9 @@ async def websocket_list_rooms(
                     vol.Optional("valve_deadband", default=DEFAULT_VALVE_DEADBAND): vol.All(
                         vol.Coerce(int), vol.Range(min=0, max=50)
                     ),
+                    vol.Optional("setpoint_offset", default=0.0): vol.All(
+                        vol.Coerce(float), vol.Range(min=SETPOINT_OFFSET_MIN, max=SETPOINT_OFFSET_MAX)
+                    ),
                     vol.Optional("coil_dry", default=COIL_DRY_INHERIT): vol.In(COIL_DRY_OVERRIDES),
                     vol.Optional("coil_dry_minutes", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=60)),
                     vol.Optional("coil_dry_mode", default=""): vol.In(["", *COIL_DRY_MODES]),
@@ -663,31 +666,20 @@ async def websocket_override_set(
         connection.send_error(msg["id"], "not_found", f"Room '{area_id}' not found")
         return
 
-    climate_mode = room.get("climate_mode", "auto")
-
-    if override_type == "boost":
-        heat = room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT))
-        cool = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
-    elif override_type == "eco":
-        heat = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))
-        cool = room.get("eco_cool", DEFAULT_ECO_COOL)
-    elif override_type == "turbo":
-        # Cool flat out: aim at the coldest setpoint the ACs accept. climate_mode
-        # is deliberately not applied — turbo is always a cooling request.
-        heat = None
-        cool = _turbo_cool_target(hass, room)
-    else:  # custom
+    if override_type == OVERRIDE_CUSTOM:
         heat = msg.get("heat")
         cool = msg.get("cool")
         if heat is None and cool is None:
             connection.send_error(msg["id"], "invalid", "Custom override requires heat and/or cool")
             return
+    elif override_type == OVERRIDE_TURBO:
+        heat, cool = None, _turbo_cool_target(hass, room)
+    else:
+        heat, cool = override_preset_band(room, override_type)
 
-    if override_type != "turbo":
-        if climate_mode == "heat_only":
-            cool = None
-        elif climate_mode == "cool_only":
-            heat = None
+    # Turbo is always a cooling request, so climate_mode is deliberately not applied.
+    if override_type != OVERRIDE_TURBO:
+        heat, cool = mask_override_band(heat, cool, room.get("climate_mode", "auto"))
 
     if heat is not None and cool is not None and cool < heat:
         connection.send_error(msg["id"], "invalid", "Cooling target must be >= heating target")
@@ -707,6 +699,7 @@ async def websocket_override_set(
 
     coordinator = _get_coordinator(hass)
     if coordinator:
+        coordinator.clear_override_seed(area_id)
         await coordinator.async_request_refresh()
 
     connection.send_result(msg["id"], {"success": True})
@@ -750,6 +743,7 @@ async def websocket_override_clear(
 
     coordinator = _get_coordinator(hass)
     if coordinator:
+        coordinator.clear_override_seed(area_id)
         await coordinator.async_request_refresh()
 
     connection.send_result(msg["id"], {"success": True})

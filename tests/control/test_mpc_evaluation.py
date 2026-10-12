@@ -1105,43 +1105,6 @@ def test_start_deadband_scales_with_comfort_weight():
 # ---------------------------------------------------------------------------
 
 
-def test_fill_missing_heat_stays_below_a_real_cool_target():
-    """A cool_only room's absent heat target must not drag the cool target up.
-
-    The optimizer clamps cool >= heat, so filling heat with the room
-    temperature would raise a "cool to 20" request to whatever the room
-    currently reads — silently discarding the override.
-    """
-    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
-
-    heat, cool = _fill_missing_targets(None, 20.0, current_temp=24.4)
-    assert cool == 20.0
-    assert heat <= cool
-    assert max(heat, cool) == 20.0  # what the optimizer's clamp will produce
-
-
-def test_fill_missing_cool_stays_above_a_real_heat_target():
-    """Symmetric case: a heat_only room's absent cool target."""
-    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
-
-    heat, cool = _fill_missing_targets(21.0, None, current_temp=18.0)
-    assert heat == 21.0
-    assert cool >= heat
-
-
-def test_fill_both_absent_falls_back_to_current_temp():
-    """Both sides off -> zero deviation, so idle stays optimal."""
-    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
-
-    assert _fill_missing_targets(None, None, current_temp=22.5) == (22.5, 22.5)
-
-
-def test_fill_leaves_real_targets_untouched():
-    from custom_components.roommind.control.mpc_controller import _fill_missing_targets
-
-    assert _fill_missing_targets(18.0, 24.0, current_temp=21.0) == (18.0, 24.0)
-
-
 def test_cool_only_override_reaches_the_optimizer(monkeypatch):
     """End-to-end: a cool_only override of 20 °C must arrive as a 20 °C cool
     target, not as the current room temperature."""

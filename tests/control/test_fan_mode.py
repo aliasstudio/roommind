@@ -242,7 +242,7 @@ async def test_mpc_apply_idle_respects_fan_only():
 
 @pytest.mark.asyncio
 async def test_mpc_apply_idle_forced_on_overrides_fan_only():
-    """Device in compressor_forced_on during IDLE runs forced_on logic, NOT fan_only."""
+    """Device in compressor_forced_on during IDLE is left running, NOT switched to fan_only."""
     _last_commands.clear()
     hass = build_hass()
     state = MagicMock()
@@ -277,12 +277,9 @@ async def test_mpc_apply_idle_forced_on_overrides_fan_only():
     await ctrl.async_apply("idle", 23.0, compressor_forced_on={"climate.ac1"})
 
     calls = hass.services.async_call.call_args_list
-    # forced_on sets temperature, does NOT switch to fan_only
     fan_only_calls = [c for c in calls if c[0][1] == "set_hvac_mode" and c[0][2].get("hvac_mode") == "fan_only"]
     assert len(fan_only_calls) == 0
-    # Verify forced_on DID call set_temperature (positive assertion)
-    temp_calls = [c for c in calls if c[0][1] == "set_temperature"]
-    assert len(temp_calls) >= 1
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -968,7 +965,7 @@ async def test_async_idle_device_setback_no_state():
 
 @pytest.mark.asyncio
 async def test_async_idle_device_setback_auto_mode_fallback():
-    """Setback with device in 'auto' hvac mode falls back to off + defense-in-depth set_temperature."""
+    """Setback with a cooling-capable device in 'auto' falls back to off, without the min_temp frame (#388)."""
     clear_command_cache()
     hass = build_hass()
     state = MagicMock()
@@ -987,8 +984,7 @@ async def test_async_idle_device_setback_auto_mode_fallback():
     targets = TargetTemps(heat=21.0, cool=24.0)
     await async_idle_device(hass, "climate.ac1", devices, area_id="living_room", targets=targets)
 
-    assert hass.services.async_call.call_count == 2
-    hass.services.async_call.assert_any_call(
+    hass.services.async_call.assert_called_once_with(
         "climate",
         "set_hvac_mode",
         {"entity_id": "climate.ac1", "hvac_mode": "off"},
@@ -1174,7 +1170,7 @@ async def test_mpc_apply_idle_respects_setback():
 
 @pytest.mark.asyncio
 async def test_mpc_apply_idle_forced_on_overrides_setback():
-    """Device in compressor_forced_on during IDLE runs forced_on logic, NOT setback."""
+    """Device in compressor_forced_on during IDLE keeps its setpoint, NOT the setback offset."""
     clear_command_cache()
     hass = build_hass()
     state = MagicMock()
@@ -1211,12 +1207,7 @@ async def test_mpc_apply_idle_forced_on_overrides_setback():
     await ctrl.async_apply(MODE_IDLE, targets, compressor_forced_on={"climate.ac1"})
 
     calls = hass.services.async_call.call_args_list
-    # forced_on sets temperature to actual target, not setback offset
-    temp_calls = [c for c in calls if c[0][1] == "set_temperature"]
-    assert len(temp_calls) >= 1
-    # Setback would be 26.0 (24+2), forced_on should use actual target (24.0)
-    setback_calls = [c for c in temp_calls if c[0][2].get("temperature") == 26.0]
-    assert len(setback_calls) == 0
+    assert calls == []
 
 
 @pytest.mark.asyncio
