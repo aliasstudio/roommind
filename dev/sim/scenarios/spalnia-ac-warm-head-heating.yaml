@@ -1,0 +1,58 @@
+name: spalnia-ac-warm-head-heating
+description: >
+  The user's bedroom in November: a ceiling-mounted split AC leads the heating, a
+  SONOFF TRVZB radiator on central heating assists at 20 %. The AC reads the warm
+  layer under the ceiling, 5-6 K above the room sensor, so a setpoint computed in
+  the room's frame barely makes it heat. On the real unit this gave 29-34 starts a
+  day of 4-15 min each around 0 to -2 °C outdoor.
+tags: [ac, trv, orchestration]
+start: 2026-11-05T00:00
+duration: 5d
+location: {latitude: 56.84, longitude: 60.6, time_zone: Asia/Yekaterinburg}
+weather: {profile: winter-cold}
+house:
+  building: bestand_teilsaniert
+  outdoor: {sensors: {temperature: sensor.outdoor_temp}}
+  rooms:
+    spalnia:
+      floor_area_m2: 14
+      initial: {temperature: 22.5}
+      windows: [{orientation: E, area_m2: 2}]
+      devices:
+        - entity_id: climate.spalnia_ac
+          profile: generic_split_ac
+          heat_capacity_w: 2600
+          cool_capacity_w: 2600
+          sensor_offset_heat_k: 6.0
+          sensor_offset_idle_k: 5.0
+        - {entity_id: climate.spalnia_trv, profile: sonoff_trvzb, valve_flow_exponent: 0.5}
+      sensors: {temperature: {entity_id: sensor.spalnia_temp, profile: sonoff_snzb02d}}
+roommind:
+  settings:
+    outdoor_temp_sensor: sensor.outdoor_temp
+    weather_entity: weather.simhome
+    control_mode: mpc
+    comfort_weight: 60
+  rooms:
+    spalnia:
+      devices:
+        - {entity_id: climate.spalnia_ac, type: ac, idle_action: "off", fan_control: auto, fan_min_mode: low, fan_max_mode: high}
+        - entity_id: climate.spalnia_trv
+          type: trv
+          valve_opening_entity: number.spalnia_trv_valve_opening_degree
+          valve_closing_entity: number.spalnia_trv_valve_closing_degree
+      temperature_sensor: sensor.spalnia_temp
+      climate_mode: auto
+      comfort_heat: 22.5
+      comfort_cool: 24.0
+      eco_heat: 20.0
+      eco_cool: 26.0
+      heat_source_orchestration: true
+      heat_source_primary: ac
+      heat_source_assist_percent: 20
+      heat_source_primary_delta: 1.5
+      heat_source_outdoor_threshold: -20.0
+      heat_source_ac_min_outdoor: -10.0
+expect:
+  - {invariant: target_never_empty}
+  - {invariant: no_rejected_commands}
