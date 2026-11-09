@@ -37,6 +37,7 @@ from ..const import (
     MODE_IDLE,
     PROPORTIONAL_DEADBAND_C,
     PROPORTIONAL_DEADBAND_NEAR_TARGET_C,
+    PROPORTIONAL_STEP_MIN_INTERVAL_SECONDS,
     START_DEADBAND_MAX_C,
     START_DEADBAND_MIN_C,
     TargetTemps,
@@ -214,6 +215,25 @@ def _resolve_step(hass: HomeAssistant, attributes: Any) -> float | None:
         return 1.0 if float(attributes.get("temperature")).is_integer() else None
     except (TypeError, ValueError):
         return None
+
+
+def _is_step_flutter(
+    entity_id: str, current: float, unsnapped: float, desired: float, step: float, deadband: float
+) -> bool:
+    """True when a proportional setpoint only flickers between neighbouring device steps.
+
+    Snapping turns a tenth of sensor noise next to a rounding boundary into a
+    full step (25.4 -> 25, 25.5 -> 26), which no deadband below the step can
+    absorb. The unsnapped value has to clear the boundary by a margin, and a
+    change of a single step waits until the previous setpoint has stood for
+    ``PROPORTIONAL_STEP_MIN_INTERVAL_SECONDS``. Larger changes pass at once.
+    """
+    if abs(unsnapped - current) < step / 2 + min(deadband, step / 4):
+        return True
+    if abs(desired - current) > step * 1.5:
+        return False
+    sent = _sent_at.get((entity_id, "set_temperature"))
+    return sent is not None and _now() - sent < PROPORTIONAL_STEP_MIN_INTERVAL_SECONDS
 
 
 def clear_command_cache() -> None:
@@ -2343,6 +2363,8 @@ class MPCController:
                 data = {**data, "target_temp_high": dev_max}
 
         # Snap to device's target_temp_step (e.g. 1.0 for ACs that only accept integers)
+        step: float | None = None
+        unsnapped = data.get("temperature")
         if service == "set_temperature" and state:
             step = _resolve_step(self.hass, state.attributes)
             if step is not None:
@@ -2424,6 +2446,10 @@ class MPCController:
                             ha_deadband = celsius_delta_to_ha(self.hass, deadband)
                             if abs(float(current) - float(desired)) < ha_deadband:
                                 skip = True
+                            elif step and eid and unsnapped is not None:
+                                skip = _is_step_flutter(
+                                    eid, float(current), float(unsnapped), float(desired), step, ha_deadband
+                                )
                         elif round(current, 1) == round(desired, 1):
                             skip = confirmed = True
 
