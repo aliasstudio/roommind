@@ -119,7 +119,7 @@ VALVE_PROPORTIONAL_BAND_K = 1.0  # A modulating valve opens 100 % further per th
 HEAD_OFFSET_SETTLE_S = 240  # Running time before readings count: the offset builds up with the airflow after a start
 HEAD_OFFSET_ALPHA = 0.05  # EMA weight per reading (one per 30 s cycle: ~10 min of running to follow a change)
 HEAD_OFFSET_MIN_SAMPLES = 10  # Readings before the offset is applied to setpoints
-HEAD_OFFSET_MAX_K = 4.0  # Larger differences are a misplaced or broken sensor, not a bias to correct
+HEAD_OFFSET_MAX_K = 8.0  # Larger differences are a misplaced or broken sensor; ceiling units heating read 5-7 K warm
 HEAD_OFFSET_GRID_K = 0.5  # Applied offsets are multiples of this; below a quarter of a degree nothing changes
 HEAD_OFFSET_HYSTERESIS_K = 0.375  # The applied offset moves only once the learned one is this far from it
 # Comfort-weighted cost (°C² equivalent) of starting a run, for slow heating systems (UFH) only.

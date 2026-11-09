@@ -79,10 +79,19 @@ def test_missing_readings_teach_nothing():
     assert tracker.get_state() == {}
 
 
-def test_implausible_offset_is_ignored():
-    """Four kelvin and more is a misplaced or broken sensor, not a bias to correct."""
+def test_ceiling_unit_heating_reads_six_kelvin_warm():
+    """A wall unit under the ceiling reads the warm layer: 5-6 K while heating is real, not a broken sensor."""
     tracker = HeadOffsetTracker()
-    feed(tracker, "heating", 27.0, 21.0)
+    t = feed(tracker, "heating", 28.5, 22.5)
+    feed(tracker, "idle", 27.5, 22.5, start=t)
+    assert tracker.offset(AC, "heat") == pytest.approx(6.0)
+    assert tracker.offset(AC, "idle") == pytest.approx(5.0)
+
+
+def test_implausible_offset_is_ignored():
+    """Beyond eight kelvin it is a misplaced or broken sensor, not a bias to correct."""
+    tracker = HeadOffsetTracker()
+    feed(tracker, "heating", 31.0, 21.0)
     assert tracker.get_state() == {}
 
 
