@@ -30,6 +30,7 @@ import {
   stripInapplicableData,
 } from "../utils/schedule";
 import "./rs-schedule-editor";
+import "./shared/rs-toggle-row";
 
 /** Mirrors _WEEKDAYS in the backend's schedule_utils.py. */
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -68,6 +69,9 @@ export class RsScheduleSettings extends RsScheduleBase {
   @state() private _importingIndex = -1;
   @state() private _importError = "";
   @property({ attribute: false }) public scheduleTempWarnings: ScheduleTempWarning[] = [];
+  @property({ type: Boolean }) public preheatEnabled = true;
+  @property({ type: Boolean }) public showPreheat = false;
+  @property({ type: Boolean }) public followDeviceSetpoint = false;
 
   static styles = [
     RsScheduleBase.sharedStyles,
@@ -123,6 +127,11 @@ export class RsScheduleSettings extends RsScheduleBase {
 
       ha-textfield {
         flex: 1;
+      }
+
+      .preheat-toggle,
+      .follow-device-toggle {
+        margin-top: 16px;
       }
 
       .view-temps {
@@ -220,6 +229,7 @@ export class RsScheduleSettings extends RsScheduleBase {
                         >`}
                     <span class="schedule-status">${this._getStatusText(index, state)}</span>
                   </div>
+                  ${this._renderRejectedTempWarning(state)}
                 `;
               })}
             </div>
@@ -260,6 +270,14 @@ export class RsScheduleSettings extends RsScheduleBase {
               })}
             </div>
           `}
+      ${this.showPreheat && !this.preheatEnabled
+        ? html`<div class="view-selector-info">${localize("schedule.view_preheat_off", l)}</div>`
+        : nothing}
+      ${this.followDeviceSetpoint
+        ? html`<div class="view-selector-info">
+            ${localize("schedule.view_follow_device_setpoint", l)}
+          </div>`
+        : nothing}
       ${this.scheduleSelectorEntity
         ? html`<div class="view-selector-info">
             ${localize("schedule.view_selector_prefix", l)}
@@ -307,7 +325,45 @@ export class RsScheduleSettings extends RsScheduleBase {
         (value) => this._onSelectorEntityChange(value),
       )}
       ${this._renderTemperatureInputs(l)}
+      ${this.showPreheat
+        ? html`<rs-toggle-row
+            class="preheat-toggle"
+            .label=${localize("schedule.preheat_label", l)}
+            .hint=${localize("schedule.preheat_hint", l)}
+            .checked=${this.preheatEnabled}
+            @toggle-changed=${this._onPreheatToggle}
+          ></rs-toggle-row>`
+        : nothing}
+      <rs-toggle-row
+        class="follow-device-toggle"
+        .label=${localize("schedule.follow_device_setpoint_label", l)}
+        .hint=${localize("schedule.follow_device_setpoint_hint", l)}
+        .checked=${this.followDeviceSetpoint}
+        @toggle-changed=${this._onFollowDeviceSetpointToggle}
+      ></rs-toggle-row>
     `;
+  }
+
+  private _onFollowDeviceSetpointToggle(e: CustomEvent<boolean>) {
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent("follow-device-setpoint-changed", {
+        detail: { value: e.detail },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private _onPreheatToggle(e: CustomEvent<boolean>) {
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent("preheat-changed", {
+        detail: { value: e.detail },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   // ─── Schedule list ─────────────────────────────────────────────

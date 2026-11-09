@@ -17,27 +17,25 @@ export class RsSettingsGeneral extends RsSettingsBase {
     const l = this.hass.language;
 
     return html`
-      ${
-        this.hass.floors && Object.keys(this.hass.floors).length > 0
-          ? html`<div class="settings-section first">
-              <div class="toggle-row">
-                <div class="toggle-text">
-                  <span class="toggle-label">${localize("settings.group_by_floor", l)}</span>
-                </div>
-                <ha-switch
-                  .checked=${this.groupByFloor}
-                  @change=${(e: Event) =>
-                    this._fire("groupByFloor", (e.target as HTMLInputElement).checked)}
-                ></ha-switch>
+      ${this.hass.floors && Object.keys(this.hass.floors).length > 0
+        ? html`<div class="settings-section first">
+            <div class="toggle-row">
+              <div class="toggle-text">
+                <span class="toggle-label">${localize("settings.group_by_floor", l)}</span>
               </div>
-            </div>`
-          : nothing
-      }
+              <ha-switch
+                .checked=${this.groupByFloor}
+                @change=${(e: Event) =>
+                  this._fire("groupByFloor", (e.target as HTMLInputElement).checked)}
+              ></ha-switch>
+            </div>
+          </div>`
+        : nothing}
 
       <div
-        class="settings-section ${
-          this.hass.floors && Object.keys(this.hass.floors).length > 0 ? "" : "first"
-        }"
+        class="settings-section ${this.hass.floors && Object.keys(this.hass.floors).length > 0
+          ? ""
+          : "first"}"
       >
         <div class="toggle-row">
           <div class="toggle-text">

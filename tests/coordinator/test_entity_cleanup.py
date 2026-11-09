@@ -64,6 +64,11 @@ class TestCoverageGaps:
         entry_vacation.unique_id = f"{DOMAIN}_vacation"
         entry_vacation.entity_id = "switch.roommind_vacation"
 
+        entry_climate_control = MagicMock()
+        entry_climate_control.platform = DOMAIN
+        entry_climate_control.unique_id = f"{DOMAIN}_climate_control"
+        entry_climate_control.entity_id = "switch.roommind_climate_control"
+
         mock_registry.entities.values.return_value = [
             entry_valid_temp,
             entry_valid_mode,
@@ -72,6 +77,7 @@ class TestCoverageGaps:
             entry_orphaned_room,
             entry_other,
             entry_vacation,
+            entry_climate_control,
         ]
 
         with patch(
@@ -238,6 +244,28 @@ class TestCoverageGaps:
 
         mock_history_store.remove_room.assert_called_once_with("test_room")
 
+    @pytest.mark.asyncio
+    async def test_a_resting_room_keeps_its_model_and_history(self, hass, mock_config_entry):
+        """Its area was deleted (#494): entities go, what it learned stays for the area's return."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator._history_store = MagicMock()
+        coordinator._model_manager = MagicMock()
+        coordinator._entity_areas.add("old_room")
+
+        mock_registry = MagicMock()
+        mock_registry.entities.values.return_value = [
+            MagicMock(entity_id="climate.roommind_old_room", platform="roommind", unique_id="roommind_old_room_climate")
+        ]
+        with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+            await coordinator.async_room_paused("old_room")
+
+        mock_registry.async_remove.assert_called_once_with("climate.roommind_old_room")
+        assert "old_room" not in coordinator._entity_areas
+        coordinator._model_manager.remove_room.assert_not_called()
+        coordinator._history_store.remove_room.assert_not_called()
+        coordinator.async_request_refresh.assert_not_awaited()
+
     def test_cleanup_keeps_entities_when_area_id_is_prefix_of_another(self, hass, mock_config_entry):
         """A shorter area_id must not claim a longer room's entities (#340).
 
@@ -340,3 +368,72 @@ class TestCoverageGaps:
             await coordinator.async_room_removed("bedroom")
 
         mock_registry.async_remove.assert_called_once_with("climate.roommind_bedroom_override")
+
+
+class TestRoomClimateEntity:
+    """The room climate entity (#238) next to the deprecated per-room entities."""
+
+    @staticmethod
+    def _entries(areas):
+        from custom_components.roommind.const import DOMAIN
+
+        entries = []
+        for area in areas:
+            for suffix, domain, object_id in (
+                ("climate", "climate", area),
+                ("override", "climate", f"{area}_override"),
+                ("mode", "sensor", f"{area}_mode"),
+            ):
+                e = MagicMock()
+                e.platform = DOMAIN
+                e.unique_id = f"{DOMAIN}_{area}_{suffix}"
+                e.entity_id = f"{domain}.{DOMAIN}_{object_id}"
+                entries.append(e)
+        return entries
+
+    def test_cleanup_keeps_room_climate_next_to_a_room_named_like_an_override(self, hass, mock_config_entry):
+        """``climate.roommind_x_override`` of room ``x_override`` and the override of room ``x`` both stay."""
+        from custom_components.roommind.const import DOMAIN
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        store = MagicMock()
+        store.get_rooms.return_value = {"x": {}, "x_override": {}}
+        hass.data = {DOMAIN: {"store": store}}
+        mock_registry = MagicMock()
+        mock_registry.entities.values.return_value = self._entries(("x", "x_override"))
+
+        with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+            coordinator.cleanup_orphaned_entities()
+
+        mock_registry.async_remove.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_room_removed_removes_its_room_climate_only(self, hass, mock_config_entry):
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator._history_store = None
+        mock_registry = MagicMock()
+        mock_registry.entities.values.return_value = self._entries(("x", "x_override"))
+
+        with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+            await coordinator.async_room_removed("x")
+
+        removed = sorted(c.args[0] for c in mock_registry.async_remove.call_args_list)
+        # climate.roommind_x_override is room x's override, room x_override's entities all stay
+        assert removed == ["climate.roommind_x", "climate.roommind_x_override", "sensor.roommind_x_mode"]
+
+    @pytest.mark.asyncio
+    async def test_turn_room_off_disables_control_and_queues_switch_off(self, hass, mock_config_entry):
+        from custom_components.roommind.const import DOMAIN
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        store = MagicMock()
+        store.async_update_room = AsyncMock()
+        hass.data = {DOMAIN: {"store": store}}
+
+        await coordinator.async_turn_room_off("living_room")
+
+        store.async_update_room.assert_awaited_once_with("living_room", {"climate_control_enabled": False})
+        assert coordinator._rooms_to_switch_off == {"living_room"}
+        coordinator.async_request_refresh.assert_awaited_once()

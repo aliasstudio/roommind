@@ -34,42 +34,40 @@ export class RsSettingsVacation extends RsSettingsBase {
         ></ha-switch>
       </div>
 
-      ${
-        this.vacationActive
-          ? html`
-              <div class="threshold-grid" style="margin-top: 12px; align-items: end">
-                <div class="threshold-field">
-                  <label class="field-label" for="vacation-until"
-                    >${localize("vacation.end_date", l)}</label
-                  >
-                  <ha-textfield
-                    id="vacation-until"
-                    .value=${this.vacationUntil}
-                    aria-label=${localize("vacation.end_date", l)}
-                    type="datetime-local"
-                    @change=${(e: Event) =>
-                      this._fire("vacationUntil", (e.target as HTMLInputElement).value)}
-                  ></ha-textfield>
-                </div>
-                <div class="threshold-field">
-                  <ha-textfield
-                    .value=${String(toDisplay(this.vacationTemp, this.hass))}
-                    .label=${localize("vacation.setback_temp", l)}
-                    .suffix=${tempUnit(this.hass)}
-                    type="number"
-                    step=${tempStep(this.hass)}
-                    min=${tempRange(5, 25, this.hass).min}
-                    max=${tempRange(5, 25, this.hass).max}
-                    @change=${(e: Event) => {
-                      const v = parseFloat((e.target as HTMLInputElement).value);
-                      if (!isNaN(v)) this._fire("vacationTemp", toCelsius(v, this.hass));
-                    }}
-                  ></ha-textfield>
-                </div>
+      ${this.vacationActive
+        ? html`
+            <div class="threshold-grid" style="margin-top: 12px; align-items: end">
+              <div class="threshold-field">
+                <label class="field-label" for="vacation-until"
+                  >${localize("vacation.end_date", l)}</label
+                >
+                <ha-textfield
+                  id="vacation-until"
+                  .value=${this.vacationUntil}
+                  aria-label=${localize("vacation.end_date", l)}
+                  type="datetime-local"
+                  @change=${(e: Event) =>
+                    this._fire("vacationUntil", (e.target as HTMLInputElement).value)}
+                ></ha-textfield>
               </div>
-            `
-          : nothing
-      }
+              <div class="threshold-field">
+                <ha-textfield
+                  .value=${String(toDisplay(this.vacationTemp, this.hass))}
+                  .label=${localize("vacation.setback_temp", l)}
+                  .suffix=${tempUnit(this.hass)}
+                  type="number"
+                  step=${tempStep(this.hass)}
+                  min=${tempRange(5, 25, this.hass).min}
+                  max=${tempRange(5, 25, this.hass).max}
+                  @change=${(e: Event) => {
+                    const v = parseFloat((e.target as HTMLInputElement).value);
+                    if (!isNaN(v)) this._fire("vacationTemp", toCelsius(v, this.hass));
+                  }}
+                ></ha-textfield>
+              </div>
+            </div>
+          `
+        : nothing}
     `;
   }
 

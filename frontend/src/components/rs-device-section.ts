@@ -10,6 +10,7 @@ import { masterDetailStyles } from "../styles/master-detail-styles";
 import { inputStyles } from "../styles/input-styles";
 import "./shared/rs-master-detail";
 import "./shared/rs-info-icon";
+import "./shared/rs-toggle-row";
 
 /**
  * UI-only sentinel for "inherit the global setting".  ha-select cannot render an
@@ -302,6 +303,17 @@ export class RsDeviceSection extends LitElement {
         --mdc-icon-size: 12px;
       }
 
+      .detail-section-label {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 10px 0 4px 0;
+        border-top: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
+        margin-top: 4px;
+      }
+
       /* View mode styles */
       .view-row {
         display: flex;
@@ -408,10 +420,11 @@ export class RsDeviceSection extends LitElement {
       device?.idle_action === "fan_only" ||
       device?.idle_action === "setback" ||
       device?.idle_action === "low";
-    const setpointBadge =
-      device?.setpoint_mode && device.setpoint_mode !== "proportional" && !!this.selectedTempSensor
-        ? device.setpoint_mode
-        : "";
+    const hasValve =
+      device?.type === "trv" && !!device?.valve_opening_entity && !!device?.valve_closing_entity;
+    const showDirectBadge =
+      device?.setpoint_mode === "direct" && !!this.selectedTempSensor && !hasValve;
+    const showValveBadge = hasValve && !!this.selectedTempSensor;
 
     return html`
       <div class="view-row">
@@ -430,9 +443,15 @@ export class RsDeviceSection extends LitElement {
                   : localize("devices.idle_action_setback", this.hass.language)}
             </span>`
           : nothing}
-        ${setpointBadge
+        ${showDirectBadge
           ? html`<span class="valve-exclude-badge">
-              ${localize(`devices.setpoint_mode_${setpointBadge}`, this.hass.language)}
+              ${localize("devices.setpoint_mode_direct", this.hass.language)}
+            </span>`
+          : nothing}
+        ${showValveBadge
+          ? html`<span class="valve-exclude-badge">
+              <ha-icon icon="mdi:valve"></ha-icon>
+              ${localize("devices.valve_direct_badge", this.hass.language)}
             </span>`
           : nothing}
         ${showExcludeBadge
@@ -626,14 +645,11 @@ export class RsDeviceSection extends LitElement {
                   >${localize("devices.coil_dry_summary", this.hass.language)}</span
                 >`
               : nothing}
-            ${device?.setpoint_mode &&
-            device.setpoint_mode !== "proportional" &&
-            this.selectedTempSensor
+            ${device?.setpoint_mode === "direct" &&
+            this.selectedTempSensor &&
+            !(device.type === "trv" && device.valve_opening_entity && device.valve_closing_entity)
               ? html`<span class="meta-pill"
-                  >${localize(
-                    `devices.setpoint_mode_${device.setpoint_mode}`,
-                    this.hass.language,
-                  )}</span
+                  >${localize("devices.setpoint_mode_direct", this.hass.language)}</span
                 >`
               : nothing}
           </div>
@@ -658,6 +674,20 @@ export class RsDeviceSection extends LitElement {
     const supportsFanOnly = hvacModes.includes("fan_only");
     const isExcluded = this.valveProtectionExclude.has(entityId);
     const lang = this.hass.language;
+    const deviceNumbers = isThermostat ? this._deviceNumberEntities(entityId) : [];
+    const hasValve = isThermostat && !!device.valve_opening_entity && !!device.valve_closing_entity;
+    // Direct valve control needs the room sensor (Full Control); offered only when the TRV has number entities
+    const showValveFields =
+      isThermostat && !!this.selectedTempSensor && (deviceNumbers.length > 0 || hasValve);
+    // A recognised pair needs no entity picking: one switch, the pickers stay for anything else
+    const valvePair = this._detectValvePair(deviceNumbers);
+    const idleOpening = device.valve_closing_mode === "idle_opening";
+    const valveAsToggle =
+      !!valvePair &&
+      !idleOpening &&
+      (!device.valve_opening_entity ||
+        (device.valve_opening_entity === valvePair[0] &&
+          device.valve_closing_entity === valvePair[1]));
 
     return html`
       <div class="detail-head">
@@ -750,138 +780,141 @@ export class RsDeviceSection extends LitElement {
                   </ha-select>
                 </div>`
               : nothing}
-              <div class="detail-field">
-                <ha-select
-                  .label=${localize("devices.coil_dry", lang)}
-                  .value=${device.coil_dry ?? "inherit"}
-                  .options=${[
-                    { value: "inherit", label: localize("devices.coil_dry_inherit", lang) },
-                    { value: "on", label: localize("devices.coil_dry_on", lang) },
-                    { value: "off", label: localize("devices.coil_dry_off", lang) },
-                  ]}
-                  @selected=${(e: Event) => this._onCoilDryChange(entityId, getSelectValue(e))}
-                  @closed=${(e: Event) => e.stopPropagation()}
-                  fixedMenuPosition
+            ${device.idle_action === "setback" && this.selectedTempSensor
+              ? html`<div class="detail-field">
+                  <rs-toggle-row
+                    .label=${localize("devices.setback_auto_off", lang)}
+                    .hint=${localize("devices.setback_auto_off_hint", lang)}
+                    .checked=${device.setback_auto_off ?? false}
+                    @toggle-changed=${(e: CustomEvent<boolean>) =>
+                      this._onSetbackAutoOffChange(entityId, e.detail)}
+                  ></rs-toggle-row>
+                </div>`
+              : nothing}
+            <div class="detail-field">
+              <ha-select
+                .label=${localize("devices.coil_dry", lang)}
+                .value=${device.coil_dry ?? "inherit"}
+                .options=${[
+                  { value: "inherit", label: localize("devices.coil_dry_inherit", lang) },
+                  { value: "on", label: localize("devices.coil_dry_on", lang) },
+                  { value: "off", label: localize("devices.coil_dry_off", lang) },
+                ]}
+                @selected=${(e: Event) => this._onCoilDryChange(entityId, getSelectValue(e))}
+                @closed=${(e: Event) => e.stopPropagation()}
+                fixedMenuPosition
+              >
+                <ha-list-item value="inherit"
+                  >${localize("devices.coil_dry_inherit", lang)}</ha-list-item
                 >
-                  <ha-list-item value="inherit"
-                    >${localize("devices.coil_dry_inherit", lang)}</ha-list-item
-                  >
-                  <ha-list-item value="on">${localize("devices.coil_dry_on", lang)}</ha-list-item>
-                  <ha-list-item value="off">${localize("devices.coil_dry_off", lang)}</ha-list-item>
-                </ha-select>
-              </div>
+                <ha-list-item value="on">${localize("devices.coil_dry_on", lang)}</ha-list-item>
+                <ha-list-item value="off">${localize("devices.coil_dry_off", lang)}</ha-list-item>
+              </ha-select>
+            </div>
 
-              ${
-                (device.coil_dry ?? "inherit") === "inherit" && !this.coilDryEnabledGlobal
-                  ? html`
-                      <div class="boost-hint">
-                        <ha-icon icon="mdi:information-outline"></ha-icon>
-                        <span>${localize("devices.coil_dry_global_off_hint", lang)}</span>
-                      </div>
-                    `
-                  : nothing
-              }
-              ${
-                (device.coil_dry ?? "inherit") !== "off"
-                  ? html`
-                      <div class="detail-field">
-                        <ha-textfield
-                          .value=${String(device.coil_dry_minutes ?? 0)}
-                          .label=${localize("devices.coil_dry_minutes", lang, {
-                            minutes: this.coilDryMinutesGlobal,
-                          })}
-                          type="number"
-                          step="1"
-                          min="0"
-                          max="60"
-                          @change=${(e: Event) => {
-                            const v = parseInt((e.target as HTMLInputElement).value, 10);
-                            if (!isNaN(v) && v >= 0 && v <= 60)
-                              this._onCoilDryMinutesChange(entityId, v);
-                          }}
-                        ></ha-textfield>
-                      </div>
+            ${(device.coil_dry ?? "inherit") === "inherit" && !this.coilDryEnabledGlobal
+              ? html`
+                  <div class="boost-hint">
+                    <ha-icon icon="mdi:information-outline"></ha-icon>
+                    <span>${localize("devices.coil_dry_global_off_hint", lang)}</span>
+                  </div>
+                `
+              : nothing}
+            ${(device.coil_dry ?? "inherit") !== "off"
+              ? html`
+                  <div class="detail-field">
+                    <ha-textfield
+                      .value=${String(device.coil_dry_minutes ?? 0)}
+                      .label=${localize("devices.coil_dry_minutes", lang, {
+                        minutes: this.coilDryMinutesGlobal,
+                      })}
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="60"
+                      @change=${(e: Event) => {
+                        const v = parseInt((e.target as HTMLInputElement).value, 10);
+                        if (!isNaN(v) && v >= 0 && v <= 60)
+                          this._onCoilDryMinutesChange(entityId, v);
+                      }}
+                    ></ha-textfield>
+                  </div>
 
-                      <div class="detail-field with-info">
-                        <ha-select
-                          .label=${localize("devices.coil_dry_mode", lang)}
-                          .value=${device.coil_dry_mode || INHERIT}
-                          .options=${[
-                            {
-                              value: INHERIT,
-                              label: localize("devices.coil_dry_mode_inherit", lang, {
-                                value: this.coilDryModeGlobal,
-                              }),
-                            },
-                            { value: "fan_only", label: "fan_only" },
-                            { value: "dry", label: "dry" },
-                          ]}
-                          @selected=${(e: Event) =>
-                            this._onCoilDryModeChange(entityId, fromInherit(getSelectValue(e)))}
-                          @closed=${(e: Event) => e.stopPropagation()}
-                          fixedMenuPosition
-                        >
-                          <ha-list-item value="${INHERIT}"
-                            >${localize("devices.coil_dry_mode_inherit", lang, {
-                              value: this.coilDryModeGlobal,
-                            })}</ha-list-item
-                          >
-                          <ha-list-item value="fan_only">fan_only</ha-list-item>
-                          <ha-list-item value="dry">dry</ha-list-item>
-                        </ha-select>
-                        ${
-                          device.coil_dry_mode === "dry"
-                            ? html`<rs-info-icon
-                                icon="mdi:alert-outline"
-                                .text=${localize("coil_dry.mode_dry_warning", lang)}
-                              ></rs-info-icon>`
-                            : nothing
-                        }
-                      </div>
+                  <div class="detail-field with-info">
+                    <ha-select
+                      .label=${localize("devices.coil_dry_mode", lang)}
+                      .value=${device.coil_dry_mode || INHERIT}
+                      .options=${[
+                        {
+                          value: INHERIT,
+                          label: localize("devices.coil_dry_mode_inherit", lang, {
+                            value: this.coilDryModeGlobal,
+                          }),
+                        },
+                        { value: "fan_only", label: "fan_only" },
+                        { value: "dry", label: "dry" },
+                      ]}
+                      @selected=${(e: Event) =>
+                        this._onCoilDryModeChange(entityId, fromInherit(getSelectValue(e)))}
+                      @closed=${(e: Event) => e.stopPropagation()}
+                      fixedMenuPosition
+                    >
+                      <ha-list-item value="${INHERIT}"
+                        >${localize("devices.coil_dry_mode_inherit", lang, {
+                          value: this.coilDryModeGlobal,
+                        })}</ha-list-item
+                      >
+                      <ha-list-item value="fan_only">fan_only</ha-list-item>
+                      <ha-list-item value="dry">dry</ha-list-item>
+                    </ha-select>
+                    ${device.coil_dry_mode === "dry"
+                      ? html`<rs-info-icon
+                          icon="mdi:alert-outline"
+                          .text=${localize("coil_dry.mode_dry_warning", lang)}
+                        ></rs-info-icon>`
+                      : nothing}
+                  </div>
 
-                      <div class="detail-field">
-                        <ha-select
-                          .label=${localize("devices.coil_dry_fan_mode", lang)}
-                          .value=${device.coil_dry_fan_mode || INHERIT}
-                          .options=${[
-                            {
-                              value: INHERIT,
-                              label: localize("devices.coil_dry_fan_mode_inherit", lang, {
-                                value: this._globalFanModeLabel(lang),
-                              }),
-                            },
-                            {
-                              value: "__keep__",
-                              label: localize("devices.coil_dry_fan_mode_keep", lang),
-                            },
-                            ...((entityState?.attributes?.fan_modes ?? []) as string[]).map(
-                              (fm) => ({
-                                value: fm,
-                                label: fm,
-                              }),
-                            ),
-                          ]}
-                          @selected=${(e: Event) =>
-                            this._onCoilDryFanModeChange(entityId, fromInherit(getSelectValue(e)))}
-                          @closed=${(e: Event) => e.stopPropagation()}
-                          fixedMenuPosition
-                        >
-                          <ha-list-item value="${INHERIT}"
-                            >${localize("devices.coil_dry_fan_mode_inherit", lang, {
-                              value: this._globalFanModeLabel(lang),
-                            })}</ha-list-item
-                          >
-                          <ha-list-item value="__keep__"
-                            >${localize("devices.coil_dry_fan_mode_keep", lang)}</ha-list-item
-                          >
-                          ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
-                            (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
-                          )}
-                        </ha-select>
-                      </div>
-                    `
-                  : nothing
-              }
+                  <div class="detail-field">
+                    <ha-select
+                      .label=${localize("devices.coil_dry_fan_mode", lang)}
+                      .value=${device.coil_dry_fan_mode || INHERIT}
+                      .options=${[
+                        {
+                          value: INHERIT,
+                          label: localize("devices.coil_dry_fan_mode_inherit", lang, {
+                            value: this._globalFanModeLabel(lang),
+                          }),
+                        },
+                        {
+                          value: "__keep__",
+                          label: localize("devices.coil_dry_fan_mode_keep", lang),
+                        },
+                        ...((entityState?.attributes?.fan_modes ?? []) as string[]).map((fm) => ({
+                          value: fm,
+                          label: fm,
+                        })),
+                      ]}
+                      @selected=${(e: Event) =>
+                        this._onCoilDryFanModeChange(entityId, fromInherit(getSelectValue(e)))}
+                      @closed=${(e: Event) => e.stopPropagation()}
+                      fixedMenuPosition
+                    >
+                      <ha-list-item value="${INHERIT}"
+                        >${localize("devices.coil_dry_fan_mode_inherit", lang, {
+                          value: this._globalFanModeLabel(lang),
+                        })}</ha-list-item
+                      >
+                      <ha-list-item value="__keep__"
+                        >${localize("devices.coil_dry_fan_mode_keep", lang)}</ha-list-item
+                      >
+                      ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                        (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
+                      )}
+                    </ha-select>
+                  </div>
+                `
+              : nothing}
             ${((entityState?.attributes?.fan_modes ?? []) as string[]).length > 0
               ? html`<div class="detail-field with-info">
                     <ha-select
@@ -1058,14 +1091,6 @@ export class RsDeviceSection extends LitElement {
                     value: "direct",
                     label: localize("devices.setpoint_mode_direct", lang),
                   },
-                  ...(isThermostat
-                    ? [
-                        {
-                          value: "valve",
-                          label: localize("devices.setpoint_mode_valve", lang),
-                        },
-                      ]
-                    : []),
                 ]}
                 @selected=${(e: Event) => this._onSetpointModeChange(entityId, getSelectValue(e)!)}
                 @closed=${(e: Event) => e.stopPropagation()}
@@ -1077,11 +1102,6 @@ export class RsDeviceSection extends LitElement {
                 <ha-list-item value="direct"
                   >${localize("devices.setpoint_mode_direct", lang)}</ha-list-item
                 >
-                ${isThermostat
-                  ? html`<ha-list-item value="valve"
-                      >${localize("devices.setpoint_mode_valve", lang)}</ha-list-item
-                    >`
-                  : nothing}
               </ha-select>
               <rs-info-icon .text=${localize("devices.setpoint_mode_hint", lang)}></rs-info-icon>
             </div>
@@ -1092,7 +1112,8 @@ export class RsDeviceSection extends LitElement {
                       .label=${localize("devices.setpoint_offset", lang)}
                       .suffix=${tempUnit(this.hass)}
                       .value=${String(
-                        Math.round(toDisplayDelta(device.setpoint_offset ?? 0, this.hass) * 10) / 10,
+                        Math.round(toDisplayDelta(device.setpoint_offset ?? 0, this.hass) * 10) /
+                          10,
                       )}
                       type="number"
                       .step=${usesFahrenheit(this.hass) ? "1" : "0.5"}
@@ -1111,95 +1132,87 @@ export class RsDeviceSection extends LitElement {
               : nothing}
           `
         : nothing}
-      ${isThermostat && this.selectedTempSensor && device.setpoint_mode === "valve"
+      ${showValveFields && valveAsToggle
         ? html`
+            <div class="detail-field">
+              <rs-toggle-row
+                .label=${localize("devices.valve_direct_control", lang)}
+                .hint=${localize("devices.valve_direct_control_toggle_hint", lang)}
+                .checked=${hasValve}
+                @toggle-changed=${(e: CustomEvent<boolean>) =>
+                  this._onValveToggle(entityId, e.detail ? valvePair : null)}
+              ></rs-toggle-row>
+            </div>
+          `
+        : nothing}
+      ${showValveFields && !valveAsToggle
+        ? html`
+            <div class="detail-section-label">
+              ${localize("devices.valve_direct_control", lang)}
+            </div>
             <div class="detail-field with-info">
               <ha-entity-picker
                 .hass=${this.hass}
                 .includeDomains=${["number"]}
+                .includeEntities=${deviceNumbers.length ? deviceNumbers : undefined}
                 .value=${device.valve_opening_entity ?? ""}
-                label=${localize("devices.valve_opening_entity", lang)}
-                allow-custom-entity
+                .label=${localize("devices.valve_opening_entity", lang)}
                 @value-changed=${(e: CustomEvent) =>
-                  this._onValveEntityChange(entityId, "valve_opening_entity", e.detail.value ?? "")}
+                  this._onValveOpeningChange(entityId, e.detail.value as string, deviceNumbers)}
               ></ha-entity-picker>
               <rs-info-icon
-                .text=${localize("devices.valve_opening_entity_hint", lang)}
+                .text=${localize("devices.valve_direct_control_hint", lang)}
               ></rs-info-icon>
             </div>
-            ${device.valve_opening_entity
-              ? html`
-                  <div class="detail-field">
-                    <ha-entity-picker
-                      .hass=${this.hass}
-                      .includeDomains=${["number"]}
-                      .value=${device.valve_closing_entity ?? ""}
-                      label=${localize("devices.valve_closing_entity", lang)}
-                      allow-custom-entity
-                      @value-changed=${(e: CustomEvent) =>
-                        this._onValveEntityChange(
-                          entityId,
-                          "valve_closing_entity",
-                          e.detail.value ?? "",
-                        )}
-                    ></ha-entity-picker>
-                  </div>
-                  <div class="detail-field with-info">
-                    <ha-textfield
-                      .label=${localize("devices.valve_min_opening", lang)}
-                      .value=${String(device.valve_min_opening ?? 10)}
-                      min="0"
-                      max="100"
-                      step="1"
-                      type="number"
-                      @input=${(e: Event) =>
-                        this._onValveNumberChange(entityId, "valve_min_opening", e, 10)}
-                    ></ha-textfield>
-                    <rs-info-icon
-                      .text=${localize("devices.valve_min_opening_hint", lang)}
-                    ></rs-info-icon>
-                  </div>
-                  <div class="detail-field">
-                    <ha-textfield
-                      .label=${localize("devices.valve_max_opening", lang)}
-                      .value=${String(device.valve_max_opening ?? 100)}
-                      min="1"
-                      max="100"
-                      step="1"
-                      type="number"
-                      @input=${(e: Event) =>
-                        this._onValveNumberChange(entityId, "valve_max_opening", e, 100)}
-                    ></ha-textfield>
-                  </div>
-                  <div class="detail-field">
-                    <ha-textfield
-                      .label=${localize("devices.valve_opening_threshold", lang)}
-                      .value=${String(device.valve_opening_threshold ?? 5)}
-                      min="0"
-                      max="100"
-                      step="1"
-                      type="number"
-                      @input=${(e: Event) =>
-                        this._onValveNumberChange(entityId, "valve_opening_threshold", e, 5)}
-                    ></ha-textfield>
-                  </div>
-                  <div class="detail-field with-info">
-                    <ha-textfield
-                      .label=${localize("devices.valve_deadband", lang)}
-                      .value=${String(device.valve_deadband ?? 5)}
-                      min="0"
-                      max="50"
-                      step="1"
-                      type="number"
-                      @input=${(e: Event) =>
-                        this._onValveNumberChange(entityId, "valve_deadband", e, 5)}
-                    ></ha-textfield>
-                    <rs-info-icon
-                      .text=${localize("devices.valve_deadband_hint", lang)}
-                    ></rs-info-icon>
-                  </div>
-                `
-              : nothing}
+            <div class="detail-field with-info">
+              <ha-entity-picker
+                .hass=${this.hass}
+                .includeDomains=${["number"]}
+                .includeEntities=${deviceNumbers.length ? deviceNumbers : undefined}
+                .value=${device.valve_closing_entity ?? ""}
+                .label=${localize(
+                  idleOpening
+                    ? "devices.valve_idle_opening_entity"
+                    : "devices.valve_closing_entity",
+                  lang,
+                )}
+                @value-changed=${(e: CustomEvent) =>
+                  this._onValveClosingChange(entityId, e.detail.value as string)}
+              ></ha-entity-picker>
+              <rs-info-icon
+                .text=${localize("devices.valve_closing_entity_hint", lang)}
+              ></rs-info-icon>
+            </div>
+            <div class="detail-field with-info">
+              <ha-select
+                .label=${localize("devices.valve_closing_mode", lang)}
+                .value=${idleOpening ? "idle_opening" : "closing_degree"}
+                .options=${[
+                  {
+                    value: "closing_degree",
+                    label: localize("devices.valve_closing_mode_closing_degree", lang),
+                  },
+                  {
+                    value: "idle_opening",
+                    label: localize("devices.valve_closing_mode_idle_opening", lang),
+                  },
+                ]}
+                @selected=${(e: Event) =>
+                  this._onValveClosingModeChange(entityId, getSelectValue(e)!)}
+                @closed=${(e: Event) => e.stopPropagation()}
+                fixedMenuPosition
+              >
+                <ha-list-item value="closing_degree"
+                  >${localize("devices.valve_closing_mode_closing_degree", lang)}</ha-list-item
+                >
+                <ha-list-item value="idle_opening"
+                  >${localize("devices.valve_closing_mode_idle_opening", lang)}</ha-list-item
+                >
+              </ha-select>
+              <rs-info-icon
+                .text=${localize("devices.valve_closing_mode_hint", lang)}
+              ></rs-info-icon>
+            </div>
           `
         : nothing}
       ${isAc &&
@@ -1311,6 +1324,12 @@ export class RsDeviceSection extends LitElement {
       if (deviceType === "trv" && updated.coil_dry === "on") {
         updated.coil_dry = "inherit";
       }
+      // Direct valve control is TRV-only; the backend schema rejects it for ACs.
+      if (deviceType === "ac") {
+        delete updated.valve_opening_entity;
+        delete updated.valve_closing_entity;
+        delete updated.valve_closing_mode;
+      }
       return updated;
     });
     this._fireDeviceChanged(newDevices);
@@ -1373,6 +1392,17 @@ export class RsDeviceSection extends LitElement {
     this._fireDeviceChanged(newDevices);
   }
 
+  private _onSetbackAutoOffChange(entityId: string, enabled: boolean): void {
+    const newDevices = this.devices.map((d) => {
+      if (d.entity_id !== entityId) return d;
+      const updated = { ...d };
+      if (enabled) updated.setback_auto_off = true;
+      else delete updated.setback_auto_off;
+      return updated;
+    });
+    this._fireDeviceChanged(newDevices);
+  }
+
   private _onIdleFanModeChange(entityId: string, fanMode: string): void {
     const newDevices = this.devices.map((d) =>
       d.entity_id === entityId ? { ...d, idle_fan_mode: fanMode } : d,
@@ -1418,34 +1448,95 @@ export class RsDeviceSection extends LitElement {
     this._fireDeviceChanged(newDevices);
   }
 
-  private _onValveEntityChange(
-    entityId: string,
-    key: "valve_opening_entity" | "valve_closing_entity",
-    value: string,
-  ): void {
+  /** Valve number entities of the TRV's own device (opening/closing degree live there). */
+  private _deviceNumberEntities(entityId: string): string[] {
+    const deviceId = this.hass.entities?.[entityId]?.device_id;
+    if (!deviceId) return [];
+    const numbers = Object.values(this.hass.entities)
+      .filter((e) => e.device_id === deviceId && e.entity_id.startsWith("number."))
+      .map((e) => e.entity_id);
+    // Not every number of a TRV is a valve degree (calibration, external temperature input);
+    // renamed or translated entity ids fall back to all numbers of the device
+    const valve = numbers.filter((eid) => /valve|opening|closing|ventil|vanne/.test(eid));
+    return valve.length ? valve : numbers;
+  }
+
+  /** Opening and closing degree of the device, recognised by name (Zigbee2MQTT: *_valve_opening_degree). */
+  private _detectValvePair(numbers: string[]): [string, string] | null {
+    for (const opening of numbers) {
+      if (!opening.includes("opening")) continue;
+      const closing = opening.replace(/opening/g, "closing");
+      if (numbers.includes(closing)) return [opening, closing];
+    }
+    return null;
+  }
+
+  private _onValveToggle(entityId: string, pair: [string, string] | null): void {
     this._fireDeviceChanged(
-      this.devices.map((d) => (d.entity_id === entityId ? { ...d, [key]: value } : d)),
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        delete updated.valve_opening_entity;
+        delete updated.valve_closing_entity;
+        delete updated.valve_closing_mode;
+        if (pair) [updated.valve_opening_entity, updated.valve_closing_entity] = pair;
+        return updated;
+      }),
     );
   }
 
-  private _onValveNumberChange(
-    entityId: string,
-    key: "valve_min_opening" | "valve_max_opening" | "valve_opening_threshold" | "valve_deadband",
-    event: Event,
-    fallback: number,
-  ): void {
-    const parsed = Number((event.target as HTMLInputElement).value.trim());
-    const value = Number.isFinite(parsed) ? parsed : fallback;
+  private _onValveOpeningChange(entityId: string, value: string, deviceNumbers: string[]): void {
+    // The closing degree sits next to the opening degree (Zigbee2MQTT: *_valve_closing_degree)
+    const sibling = value.replace(/opening/g, "closing");
+    const closing = sibling !== value && deviceNumbers.includes(sibling) ? sibling : "";
     this._fireDeviceChanged(
-      this.devices.map((d) => (d.entity_id === entityId ? { ...d, [key]: value } : d)),
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        if (!value) {
+          delete updated.valve_opening_entity;
+          delete updated.valve_closing_entity;
+          delete updated.valve_closing_mode;
+          return updated;
+        }
+        updated.valve_opening_entity = value;
+        if (!updated.valve_closing_entity && closing) updated.valve_closing_entity = closing;
+        return updated;
+      }),
+    );
+  }
+
+  private _onValveClosingChange(entityId: string, value: string): void {
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        if (value) updated.valve_closing_entity = value;
+        else delete updated.valve_closing_entity;
+        return updated;
+      }),
+    );
+  }
+
+  private _onValveClosingModeChange(entityId: string, value: string): void {
+    const current = this.devices.find((d) => d.entity_id === entityId)?.valve_closing_mode;
+    if (value !== "closing_degree" && value !== "idle_opening") return;
+    if (value === (current ?? "closing_degree")) return;
+    this._fireDeviceChanged(
+      this.devices.map((d) => {
+        if (d.entity_id !== entityId) return d;
+        const updated = { ...d };
+        // The default stays unstored, so devices of everyone else keep their saved form
+        if (value === "idle_opening") updated.valve_closing_mode = "idle_opening";
+        else delete updated.valve_closing_mode;
+        return updated;
+      }),
     );
   }
 
   private _onSetpointModeChange(entityId: string, mode: string): void {
     const newDevices = this.devices.map((d) =>
-      d.entity_id === entityId
-        ? { ...d, setpoint_mode: mode as "proportional" | "direct" | "valve" }
-        : d,
+      d.entity_id === entityId ? { ...d, setpoint_mode: mode as "proportional" | "direct" } : d,
     );
     this._fireDeviceChanged(newDevices);
   }

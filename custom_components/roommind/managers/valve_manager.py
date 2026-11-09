@@ -17,7 +17,6 @@ from ..const import (
     make_roommind_context,
 )
 from ..control.mpc_controller import async_idle_device, async_turn_off_climate, resolve_hvac_mode
-from ..control.valve_regulation import async_apply_valve_demand, get_valve_config
 from ..utils.device_utils import build_rooms_devices_map, get_trv_eids
 from ..utils.temp_utils import celsius_to_ha_temp
 
@@ -158,23 +157,11 @@ class ValveManager:
         all_trvs -= all_excluded
 
         # Start cycling stale valves
-        rooms_devices = build_rooms_devices_map(rooms)
         for eid in all_trvs:
             if eid in self._cycling:
                 continue
             last = self._last_actuation.get(eid, 0)
             if now - last >= threshold:
-                idle_days = int((now - last) / 86400) if last else 0
-                # Valve-regulated TRVs move on command: drive the opening
-                # degree wide open, no setpoint games needed.
-                valve_config = get_valve_config(rooms_devices.get(eid) or [], eid)
-                if valve_config is not None:
-                    await async_apply_valve_demand(
-                        self.hass, eid, valve_config, 100, area_id="valve_protection", force=True
-                    )
-                    self._cycling[eid] = now
-                    _LOGGER.info("Valve protection: cycling '%s' (idle for %d days)", eid, idle_days)
-                    continue
                 try:
                     eid_state = self.hass.states.get(eid)
                     vp_modes = (eid_state.attributes.get("hvac_modes") or []) if eid_state else []
@@ -220,6 +207,7 @@ class ValveManager:
                             context=make_roommind_context(),
                         )
                     self._cycling[eid] = now
+                    idle_days = int((now - last) / 86400) if last else 0
                     _LOGGER.info(
                         "Valve protection: cycling '%s' (idle for %d days)",
                         eid,

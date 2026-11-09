@@ -6,6 +6,8 @@ import { localize } from "../utils/localize";
 import { openEntityInfo } from "../utils/events";
 import { tempUnit } from "../utils/temperature";
 import { inputStyles } from "../styles/input-styles";
+import { DEFAULT_OCCUPANCY_ECO_DELAY, MIN_OCCUPANCY_ECO_DELAY } from "../utils/constants";
+import "./shared/rs-toggle-row";
 
 type SensorKind = "temp" | "humidity" | "occupancy" | "window";
 
@@ -16,6 +18,8 @@ export class RsSensorSection extends LitElement {
   @property({ type: String }) public temperatureSensor = "";
   @property({ type: String }) public humiditySensor = "";
   @property({ attribute: false }) public occupancySensors: Set<string> = new Set();
+  @property({ type: Boolean }) public occupancyEcoEnabled = false;
+  @property({ type: Number }) public occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
   @property({ attribute: false }) public windowSensors: Set<string> = new Set();
   @property({ type: Number }) public windowOpenDelay = 0;
   @property({ type: Number }) public windowCloseDelay = 0;
@@ -242,6 +246,10 @@ export class RsSensorSection extends LitElement {
         margin-top: 8px;
       }
 
+      .occupancy-eco {
+        margin-top: 8px;
+      }
+
       .delay-fields ha-textfield {
         flex: 1;
       }
@@ -395,57 +403,49 @@ export class RsSensorSection extends LitElement {
 
     const lang = this.hass.language;
     return html`
-      ${
-        hasTempSensor
-          ? html`
-              <div class="section-subtitle">${localize("devices.temp_sensors", lang)}</div>
-              ${this._renderSensorViewRow(this.temperatureSensor, "temp")}
-            `
-          : nothing
-      }
-      ${
-        hasHumiditySensor
-          ? html`
-              <div class="section-subtitle">${localize("devices.humidity_sensors", lang)}</div>
-              ${this._renderSensorViewRow(this.humiditySensor, "humidity")}
-            `
-          : nothing
-      }
-      ${
-        hasOccupancySensors
-          ? html`
-              <div class="section-subtitle">${localize("devices.occupancy_sensors", lang)}</div>
-              ${[...this.occupancySensors].map((id) => this._renderOccupancyViewRow(id))}
-            `
-          : nothing
-      }
-      ${
-        hasWindowSensors
-          ? html`
-              <div class="section-subtitle">${localize("devices.window_sensors", lang)}</div>
-              ${[...this.windowSensors].map((id) => this._renderWindowViewRow(id))}
-              ${
-                this.windowOpenDelay || this.windowCloseDelay
-                  ? html`<div class="delay-view">
-                      ${
-                        this.windowOpenDelay
-                          ? html`${localize("devices.window_open_delay", lang)}:
-                            ${this.windowOpenDelay}s`
-                          : nothing
-                      }
-                      ${this.windowOpenDelay && this.windowCloseDelay ? " · " : nothing}
-                      ${
-                        this.windowCloseDelay
-                          ? html`${localize("devices.window_close_delay", lang)}:
-                            ${this.windowCloseDelay}s`
-                          : nothing
-                      }
-                    </div>`
-                  : nothing
-              }
-            `
-          : nothing
-      }
+      ${hasTempSensor
+        ? html`
+            <div class="section-subtitle">${localize("devices.temp_sensors", lang)}</div>
+            ${this._renderSensorViewRow(this.temperatureSensor, "temp")}
+          `
+        : nothing}
+      ${hasHumiditySensor
+        ? html`
+            <div class="section-subtitle">${localize("devices.humidity_sensors", lang)}</div>
+            ${this._renderSensorViewRow(this.humiditySensor, "humidity")}
+          `
+        : nothing}
+      ${hasOccupancySensors
+        ? html`
+            <div class="section-subtitle">${localize("devices.occupancy_sensors", lang)}</div>
+            ${[...this.occupancySensors].map((id) => this._renderOccupancyViewRow(id))}
+            ${this.occupancyEcoEnabled
+              ? html`<div class="delay-view">
+                  ${localize("devices.occupancy_eco_view", lang, {
+                    minutes: String(this.occupancyEcoDelay),
+                  })}
+                </div>`
+              : nothing}
+          `
+        : nothing}
+      ${hasWindowSensors
+        ? html`
+            <div class="section-subtitle">${localize("devices.window_sensors", lang)}</div>
+            ${[...this.windowSensors].map((id) => this._renderWindowViewRow(id))}
+            ${this.windowOpenDelay || this.windowCloseDelay
+              ? html`<div class="delay-view">
+                  ${this.windowOpenDelay
+                    ? html`${localize("devices.window_open_delay", lang)}: ${this.windowOpenDelay}s`
+                    : nothing}
+                  ${this.windowOpenDelay && this.windowCloseDelay ? " · " : nothing}
+                  ${this.windowCloseDelay
+                    ? html`${localize("devices.window_close_delay", lang)}:
+                      ${this.windowCloseDelay}s`
+                    : nothing}
+                </div>`
+              : nothing}
+          `
+        : nothing}
     `;
   }
 
@@ -602,6 +602,7 @@ export class RsSensorSection extends LitElement {
         areaSensors: areaOccupancySensors,
         externalSensors: externalOccupancySensors,
         selectedCount: this.occupancySensors.size,
+        extras: this._renderOccupancyExtras(lang),
       })}
       ${this._renderBlock({
         kind: "window",
@@ -614,6 +615,35 @@ export class RsSensorSection extends LitElement {
         extras: this._renderWindowExtras(lang),
       })}
       ${this._renderGlobalAdd(lang)}
+    `;
+  }
+
+  private _renderOccupancyExtras(lang: string) {
+    if (this.occupancySensors.size === 0) return nothing;
+    return html`
+      <rs-toggle-row
+        class="occupancy-eco"
+        .label=${localize("devices.occupancy_eco", lang)}
+        .hint=${localize("devices.occupancy_eco_hint", lang)}
+        .checked=${this.occupancyEcoEnabled}
+        @toggle-changed=${(e: CustomEvent<boolean>) =>
+          this._fireSensorChanged("occupancy_eco_enabled", e.detail)}
+      ></rs-toggle-row>
+      ${this.occupancyEcoEnabled
+        ? html`
+            <div class="delay-fields">
+              <ha-textfield
+                type="number"
+                min=${MIN_OCCUPANCY_ECO_DELAY}
+                max="240"
+                suffix="min"
+                .label=${localize("devices.occupancy_eco_delay", lang)}
+                .value=${String(this.occupancyEcoDelay)}
+                @change=${this._onOccupancyEcoDelayChange}
+              ></ha-textfield>
+            </div>
+          `
+        : nothing}
     `;
   }
 
@@ -638,16 +668,14 @@ export class RsSensorSection extends LitElement {
           @change=${this._onWindowCloseDelayChange}
         ></ha-textfield>
       </div>
-      ${
-        this.heatingSystemType === "underfloor" && this.windowOpenDelay < 300
-          ? html`
-              <div class="delay-hint">
-                <ha-icon icon="mdi:information-outline"></ha-icon>
-                ${localize("devices.underfloor_delay_hint", lang)}
-              </div>
-            `
-          : nothing
-      }
+      ${this.heatingSystemType === "underfloor" && this.windowOpenDelay < 300
+        ? html`
+            <div class="delay-hint">
+              <ha-icon icon="mdi:information-outline"></ha-icon>
+              ${localize("devices.underfloor_delay_hint", lang)}
+            </div>
+          `
+        : nothing}
     `;
   }
 
@@ -703,41 +731,35 @@ export class RsSensorSection extends LitElement {
         <div class="block-header" @click=${() => this._toggleBlock(opts.kind)}>
           <ha-icon icon=${opts.icon}></ha-icon>
           <div class="block-title">${opts.title}</div>
-          ${
-            opts.selectedCount > 0
-              ? html`<span class="count-chip has-selection">${opts.selectedCount}</span>`
-              : total > 0
-                ? html`<span class="count-chip">${total}</span>`
-                : nothing
-          }
+          ${opts.selectedCount > 0
+            ? html`<span class="count-chip has-selection">${opts.selectedCount}</span>`
+            : total > 0
+              ? html`<span class="count-chip">${total}</span>`
+              : nothing}
           <ha-icon
             class="chevron ${isCollapsed ? "collapsed" : ""}"
             icon="mdi:chevron-down"
           ></ha-icon>
         </div>
-        ${
-          isCollapsed
-            ? nothing
-            : html`
-                <div class="block-body">
-                  <div class="row-list">
-                    ${
-                      opts.areaSensors.length > 0 || opts.externalSensors.length > 0
-                        ? html`
-                            ${opts.areaSensors.map((e) =>
-                              this._renderEditRow(e.entity_id, opts.kind, false),
-                            )}
-                            ${opts.externalSensors.map((id) =>
-                              this._renderEditRow(id, opts.kind, true),
-                            )}
-                          `
-                        : html`<div class="empty-row">${opts.emptyText}</div>`
-                    }
-                  </div>
-                  ${opts.extras ?? nothing}
+        ${isCollapsed
+          ? nothing
+          : html`
+              <div class="block-body">
+                <div class="row-list">
+                  ${opts.areaSensors.length > 0 || opts.externalSensors.length > 0
+                    ? html`
+                        ${opts.areaSensors.map((e) =>
+                          this._renderEditRow(e.entity_id, opts.kind, false),
+                        )}
+                        ${opts.externalSensors.map((id) =>
+                          this._renderEditRow(id, opts.kind, true),
+                        )}
+                      `
+                    : html`<div class="empty-row">${opts.emptyText}</div>`}
                 </div>
-              `
-        }
+                ${opts.extras ?? nothing}
+              </div>
+            `}
       </div>
     `;
   }
@@ -779,13 +801,9 @@ export class RsSensorSection extends LitElement {
           <div class="row-info">
             <div class="row-name-line">
               <span class="row-name">${friendlyName}</span>
-              ${
-                external
-                  ? html`<span class="external-badge"
-                      >${localize("devices.other_area", lang)}</span
-                    >`
-                  : nothing
-              }
+              ${external
+                ? html`<span class="external-badge">${localize("devices.other_area", lang)}</span>`
+                : nothing}
             </div>
             <div class="row-eid">${entityId}</div>
           </div>
@@ -814,11 +832,9 @@ export class RsSensorSection extends LitElement {
         <div class="row-info">
           <div class="row-name-line">
             <span class="row-name">${friendlyName}</span>
-            ${
-              external
-                ? html`<span class="external-badge">${localize("devices.other_area", lang)}</span>`
-                : nothing
-            }
+            ${external
+              ? html`<span class="external-badge">${localize("devices.other_area", lang)}</span>`
+              : nothing}
           </div>
           <div class="row-eid">${entityId}</div>
         </div>
@@ -921,6 +937,27 @@ export class RsSensorSection extends LitElement {
       }),
     );
   }
+
+  private _fireSensorChanged(key: string, value: boolean | number) {
+    this.dispatchEvent(
+      new CustomEvent("sensor-changed", {
+        detail: { key, value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private _onOccupancyEcoDelayChange = (e: Event) => {
+    const field = e.target as HTMLInputElement;
+    const parsed = parseInt(field.value);
+    const value = Number.isNaN(parsed)
+      ? DEFAULT_OCCUPANCY_ECO_DELAY
+      : Math.min(240, Math.max(MIN_OCCUPANCY_ECO_DELAY, parsed));
+    // A clamped value equal to the stored one does not re-render, the field would keep the raw input.
+    field.value = String(value);
+    this._fireSensorChanged("occupancy_eco_delay", value);
+  };
 
   private _onWindowOpenDelayChange = (e: Event) => {
     const value = Math.max(0, parseInt((e.target as HTMLInputElement).value) || 0);

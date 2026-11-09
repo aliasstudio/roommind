@@ -3,7 +3,7 @@
  * Owns all state, loads/saves settings, delegates rendering to sub-components
  * wrapped in ha-expansion-panel accordion sections.
  */
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type {
   HomeAssistant,
@@ -11,6 +11,7 @@ import type {
   RoomConfig,
   NotificationTarget,
   CompressorGroup,
+  RoomWithoutArea,
 } from "../types";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
@@ -29,11 +30,15 @@ import "./settings/rs-settings-mold";
 import "./settings/rs-settings-notifications";
 import "./settings/rs-settings-learning";
 import "./settings/rs-settings-reset";
+import "./settings/rs-settings-orphans";
 
 @customElement("rs-settings")
 export class RsSettings extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
+  @property({ attribute: false }) public roomsWithoutArea: RoomWithoutArea[] = [];
+  @property({ type: Boolean }) public climateControlActive = true;
+  @state() private _deletedOrphans: ReadonlySet<string> = new Set();
 
   @state() private _groupByFloor = false;
   @state() private _climateControlActive = true;
@@ -62,6 +67,7 @@ export class RsSettings extends LitElement {
   @state() private _valveProtectionInterval = 7;
   @state() private _moldDetectionEnabled = false;
   @state() private _moldHumidityThreshold = 70;
+  @state() private _moldFRsi = 0.8;
   @state() private _moldSustainedMinutes = 30;
   @state() private _moldNotificationCooldown = 60;
   @state() private _moldNotificationsEnabled = true;
@@ -83,6 +89,9 @@ export class RsSettings extends LitElement {
   @state() private _loaded = false;
 
   private _saveDebounce?: ReturnType<typeof setTimeout>;
+  // switch.roommind_climate_control can change it while this page is open (#291), so it
+  // is only sent after the toggle here was used, never as a stale copy with other settings.
+  private _climateControlDirty = false;
 
   connectedCallback() {
     super.connectedCallback();
@@ -132,6 +141,7 @@ export class RsSettings extends LitElement {
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
       this._moldDetectionEnabled = s.mold_detection_enabled ?? false;
       this._moldHumidityThreshold = s.mold_humidity_threshold ?? 70;
+      this._moldFRsi = s.mold_f_rsi ?? 0.8;
       this._moldSustainedMinutes = s.mold_sustained_minutes ?? 30;
       this._moldNotificationCooldown = s.mold_notification_cooldown ?? 60;
       this._moldNotificationsEnabled = s.mold_notifications_enabled ?? true;
@@ -158,14 +168,45 @@ export class RsSettings extends LitElement {
     }
   }
 
+  protected willUpdate(changed: Map<string, unknown>) {
+    if (changed.has("roomsWithoutArea") && this._deletedOrphans.size) {
+      // The list from the backend is current again; an id resting later must show up again
+      const listed = new Set(this.roomsWithoutArea.map((r) => r.area_id));
+      this._deletedOrphans = new Set([...this._deletedOrphans].filter((id) => listed.has(id)));
+    }
+    if (
+      changed.has("climateControlActive") &&
+      changed.get("climateControlActive") !== undefined &&
+      !this._climateControlDirty
+    ) {
+      this._climateControlActive = this.climateControlActive;
+    }
+  }
+
   protected render() {
     if (!this._loaded) {
       return html`<div class="loading">${localize("panel.loading", this.hass.language)}</div>`;
     }
 
     const l = this.hass.language;
+    const orphans = this.roomsWithoutArea.filter((r) => !this._deletedOrphans.has(r.area_id));
 
     return html`
+      ${orphans.length
+        ? html`<rs-settings-panel
+            icon="mdi:home-remove-outline"
+            .heading=${localize("settings.orphans_title", l)}
+            .intro=${localize("settings.intro.orphans", l)}
+          >
+            <rs-settings-orphans
+              .hass=${this.hass}
+              .rooms=${orphans}
+              @orphan-deleted=${(e: CustomEvent<string>) => {
+                this._deletedOrphans = new Set([...this._deletedOrphans, e.detail]);
+              }}
+            ></rs-settings-orphans>
+          </rs-settings-panel>`
+        : nothing}
       <rs-settings-panel
         icon="mdi:power"
         .heading=${localize("settings.general_title", l)}
@@ -302,6 +343,7 @@ export class RsSettings extends LitElement {
           .hass=${this.hass}
           .moldDetectionEnabled=${this._moldDetectionEnabled}
           .moldHumidityThreshold=${this._moldHumidityThreshold}
+          .moldFRsi=${this._moldFRsi}
           .moldSustainedMinutes=${this._moldSustainedMinutes}
           .moldPreventionEnabled=${this._moldPreventionEnabled}
           .moldPreventionIntensity=${this._moldPreventionIntensity}
@@ -366,6 +408,7 @@ export class RsSettings extends LitElement {
 
   private _onSettingChanged(e: CustomEvent<{ key: string; value: unknown }>) {
     const { key, value } = e.detail;
+    if (key === "climateControlActive") this._climateControlDirty = true;
     (this as Record<string, unknown>)[`_${key}`] = value;
     this._autoSave();
   }
@@ -401,12 +444,13 @@ export class RsSettings extends LitElement {
 
   private async _doSave() {
     fireSaveStatus(this, "saving");
+    const sentClimateControl = this._climateControlDirty ? this._climateControlActive : undefined;
 
     try {
       await this.hass.callWS({
         type: "roommind/settings/save",
         group_by_floor: this._groupByFloor,
-        climate_control_active: this._climateControlActive,
+        ...(sentClimateControl !== undefined ? { climate_control_active: sentClimateControl } : {}),
         learning_disabled_rooms: this._learningDisabledRooms,
         outdoor_temp_sensor: this._outdoorTempSensor,
         outdoor_humidity_sensor: this._outdoorHumiditySensor,
@@ -442,6 +486,7 @@ export class RsSettings extends LitElement {
         coil_dry_drain_minutes: this._coilDryDrainMinutes,
         mold_detection_enabled: this._moldDetectionEnabled,
         mold_humidity_threshold: this._moldHumidityThreshold,
+        mold_f_rsi: this._moldFRsi,
         mold_sustained_minutes: this._moldSustainedMinutes,
         mold_notification_cooldown: this._moldNotificationCooldown,
         mold_notifications_enabled: this._moldNotificationsEnabled,
@@ -456,8 +501,14 @@ export class RsSettings extends LitElement {
         dehumidify_humidity_threshold: this._dehumidifyThreshold,
         dehumidify_stop_threshold: this._dehumidifyStopThreshold,
       });
+      // Toggled again while the request was out: stays dirty, the queued save sends it.
+      if (this._climateControlActive === sentClimateControl) this._climateControlDirty = false;
       fireSaveStatus(this, "saved");
     } catch {
+      if (this._climateControlActive === sentClimateControl) {
+        this._climateControlDirty = false;
+        this._climateControlActive = this.climateControlActive;
+      }
       fireSaveStatus(this, "error");
     }
   }

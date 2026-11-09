@@ -5,6 +5,12 @@ import { localize } from "../utils/localize";
 import { inputStyles } from "../styles/input-styles";
 import { tempUnit, toDisplay, toCelsius, tempStep, tempRange } from "../utils/temperature";
 import { OVERRIDE_ICONS, OVERRIDE_LABEL_KEYS, OVERRIDE_TYPES } from "../utils/override";
+import {
+  OVERRIDE_DURATIONS_H,
+  isInvalidBand,
+  overrideBand,
+  overrideSetMessage,
+} from "../utils/override";
 
 @customElement("rs-override-section")
 export class RsOverrideSection extends LitElement {
@@ -227,11 +233,9 @@ export class RsOverrideSection extends LitElement {
       <hr class="override-divider" />
       <div class="override-label">${localize("override.label", this.language)}</div>
       ${this._renderOverrideButtons(ov)}
-      ${
-        this._overrideError
-          ? html`<div class="override-error">${this._overrideError}</div>`
-          : nothing
-      }
+      ${this._overrideError
+        ? html`<div class="override-error">${this._overrideError}</div>`
+        : nothing}
     `;
   }
 
@@ -262,34 +266,28 @@ export class RsOverrideSection extends LitElement {
           },
         )}
       </div>
-      ${
-        showDuration
-          ? html`
-              ${this._overridePending === "custom" ? this._renderCustomInputs() : nothing}
-              <div class="override-duration">
-                <span class="override-duration-label"
-                  >${localize("override.activate_for", this.language)}</span
-                >
-                <div class="override-dur-chips">
-                  ${[
-                    { label: "1h", hours: 1 },
-                    { label: "2h", hours: 2 },
-                    { label: "4h", hours: 4 },
-                  ].map(
-                    (opt) => html`
-                      <button
-                        class="override-dur-chip"
-                        @click=${() => this._onOverrideActivate(opt.hours)}
-                      >
-                        ${opt.label}
-                      </button>
-                    `,
-                  )}
-                </div>
+      ${showDuration
+        ? html`
+            ${this._overridePending === "custom" ? this._renderCustomInputs() : nothing}
+            <div class="override-duration">
+              <span class="override-duration-label"
+                >${localize("override.activate_for", this.language)}</span
+              >
+              <div class="override-dur-chips">
+                ${OVERRIDE_DURATIONS_H.map(
+                  (hours) => html`
+                    <button
+                      class="override-dur-chip"
+                      @click=${() => this._onOverrideActivate(hours)}
+                    >
+                      ${hours}h
+                    </button>
+                  `,
+                )}
               </div>
-            `
-          : nothing
-      }
+            </div>
+          `
+        : nothing}
     `;
   }
 
@@ -363,32 +361,22 @@ export class RsOverrideSection extends LitElement {
     if (!this._overridePending || !this.config) return;
 
     const pendingType = this._overridePending;
-    let heat: number | null;
-    let cool: number | null;
-    if (pendingType === "boost") {
-      heat = this.comfortHeat;
-      cool = this.comfortCool;
-    } else if (pendingType === "eco") {
-      heat = this.ecoHeat;
-      cool = this.ecoCool;
-    } else if (pendingType === "turbo") {
-      // The backend resolves the coldest setpoint the room's ACs accept.
-      heat = null;
-      cool = null;
-    } else {
-      heat = this._overrideCustomHeat;
-      cool = this._overrideCustomCool;
-    }
-    if (pendingType !== "turbo") {
-      if (this.climateMode === "heat_only") cool = null;
-      if (this.climateMode === "cool_only") heat = null;
-    }
-
-    if (heat != null && cool != null && cool < heat) {
+    const custom = { heat: this._overrideCustomHeat, cool: this._overrideCustomCool };
+    const { heat, cool } = overrideBand(
+      pendingType,
+      this.climateMode,
+      {
+        comfortHeat: this.comfortHeat,
+        comfortCool: this.comfortCool,
+        ecoHeat: this.ecoHeat,
+        ecoCool: this.ecoCool,
+      },
+      custom,
+    );
+    if (isInvalidBand(heat, cool)) {
       this._overrideError = localize("override.invalid_band", this.language);
       return;
     }
-
     this._optimisticOverride = {
       type: pendingType,
       heat,
@@ -398,18 +386,13 @@ export class RsOverrideSection extends LitElement {
     this._optimisticClear = false;
     this._overridePending = null;
     this._overrideError = "";
-
-    const msg: Record<string, unknown> = {
-      type: "roommind/override/set",
-      area_id: this.config.area_id,
-      override_type: pendingType,
-      duration: hours,
-    };
-    if (pendingType === "custom") {
-      if (this.climateMode !== "cool_only") msg.heat = this._overrideCustomHeat;
-      if (this.climateMode !== "heat_only") msg.cool = this._overrideCustomCool;
-    }
-
+    const msg = overrideSetMessage(
+      this.config.area_id,
+      pendingType,
+      hours,
+      this.climateMode,
+      custom,
+    );
     try {
       await this.hass.callWS(msg);
       this._fireRoomUpdated();

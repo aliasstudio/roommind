@@ -30,6 +30,7 @@ import "../components/shared/rs-info-icon";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
 import { resolveHeatingSystemType } from "../utils/device-utils";
+import { DEFAULT_OCCUPANCY_ECO_DELAY } from "../utils/constants";
 import type { RsOverrideSection } from "./rs-override-section";
 
 const CONTROL_DOCS_URL =
@@ -49,6 +50,7 @@ export class RsRoomDetail extends LitElement {
   @property({ type: Boolean }) public climateControlActive = true;
 
   @property({ type: Boolean }) public valveProtectionEnabled = false;
+  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
   @property({ type: Boolean }) public coilDryEnabled = false;
   @property({ type: Number }) public coilDryMinutes = 20;
   @property({ type: String }) public coilDryMode = "fan_only";
@@ -58,6 +60,10 @@ export class RsRoomDetail extends LitElement {
   @state() private _selectedTempSensor = "";
   @state() private _selectedHumiditySensor = "";
   @state() private _selectedOccupancySensors: Set<string> = new Set();
+  @state() private _occupancyEcoEnabled = false;
+  @state() private _preheatEnabled = true;
+  @state() private _followDeviceSetpoint = false;
+  @state() private _occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
   @state() private _selectedWindowSensors: Set<string> = new Set();
   @state() private _windowOpenDelay = 0;
   @state() private _windowCloseDelay = 0;
@@ -83,6 +89,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _coversNightClose = false;
   @state() private _coversNightPosition = 0;
   @state() private _coversSnapDeploy = false;
+  @state() private _coversWindowHold = false;
   @state() private _coverOrientations: Record<string, number> = {};
   @state() private _coversNightCloseElevation = 0;
   @state() private _coversNightCloseOffsetMinutes = 0;
@@ -325,6 +332,10 @@ export class RsRoomDetail extends LitElement {
       this._selectedTempSensor = this.config.temperature_sensor;
       this._selectedHumiditySensor = this.config.humidity_sensor ?? "";
       this._selectedOccupancySensors = new Set(this.config.occupancy_sensors ?? []);
+      this._occupancyEcoEnabled = this.config.occupancy_eco_enabled ?? false;
+      this._preheatEnabled = this.config.preheat_enabled ?? true;
+      this._followDeviceSetpoint = this.config.follow_device_setpoint ?? false;
+      this._occupancyEcoDelay = this.config.occupancy_eco_delay ?? DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set(this.config.window_sensors ?? []);
       this._windowOpenDelay = this.config.window_open_delay ?? 0;
       this._windowCloseDelay = this.config.window_close_delay ?? 0;
@@ -347,6 +358,7 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = this.config.covers_night_close ?? false;
       this._coversNightPosition = this.config.covers_night_position ?? 0;
       this._coversSnapDeploy = this.config.covers_snap_deploy ?? false;
+      this._coversWindowHold = this.config.covers_window_hold ?? false;
       this._coverOrientations = this.config.cover_orientations ?? {};
       this._coversNightCloseElevation = this.config.covers_night_close_elevation ?? 0;
       this._coversNightCloseOffsetMinutes = this.config.covers_night_close_offset_minutes ?? 0;
@@ -367,6 +379,10 @@ export class RsRoomDetail extends LitElement {
       this._selectedTempSensor = "";
       this._selectedHumiditySensor = "";
       this._selectedOccupancySensors = new Set();
+      this._occupancyEcoEnabled = false;
+      this._preheatEnabled = true;
+      this._followDeviceSetpoint = false;
+      this._occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set();
       this._windowOpenDelay = 0;
       this._windowCloseDelay = 0;
@@ -389,6 +405,7 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = false;
       this._coversNightPosition = 0;
       this._coversSnapDeploy = false;
+      this._coversWindowHold = false;
       this._coverOrientations = {};
       this._coversNightCloseElevation = 0;
       this._coversNightCloseOffsetMinutes = 0;
@@ -529,6 +546,9 @@ export class RsRoomDetail extends LitElement {
                     @comfort-cool-changed=${this._onComfortCoolChanged}
                     @eco-heat-changed=${this._onEcoHeatChanged}
                     @eco-cool-changed=${this._onEcoCoolChanged}
+                    .preheatEnabled=${this._preheatEnabled}
+                    .followDeviceSetpoint=${this._followDeviceSetpoint}
+                    .showPreheat=${this._showPreheat()}
                   ></rs-schedule-settings>
                   ${this.config
                     ? html`
@@ -591,6 +611,8 @@ export class RsRoomDetail extends LitElement {
                     .heatingSystemType=${resolveHeatingSystemType(this._devices)}
                     .language=${this.hass.language}
                     @sensor-changed=${this._onSensorChanged}
+                    .occupancyEcoEnabled=${this._occupancyEcoEnabled}
+                    .occupancyEcoDelay=${this._occupancyEcoDelay}
                   ></rs-sensor-section>
                 </rs-section-card>
 
@@ -658,6 +680,9 @@ export class RsRoomDetail extends LitElement {
                   @covers-toggle=${this._onCoversToggle}
                   @setting-changed=${this._onCoverSettingChanged}
                   @cover-resume-auto=${this._onCoverResumeAuto}
+                  .coverReason=${this.config?.live?.cover_reason ?? ""}
+                  .windowHold=${this._coversWindowHold}
+                  .hasWindowSensors=${this._selectedWindowSensors.size > 0}
                 ></rs-covers-section>
               </rs-section-card>`
             : nothing}
@@ -755,7 +780,6 @@ export class RsRoomDetail extends LitElement {
           </div>
           <rs-schedule-settings
             .hass=${this.hass}
-            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
             .schedules=${this._schedules}
             .scheduleSelectorEntity=${this._scheduleSelectorEntity}
             .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
@@ -767,6 +791,10 @@ export class RsRoomDetail extends LitElement {
             .devices=${this._devices}
             .rooms=${this.rooms}
             .areaId=${this.area.area_id}
+            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+            .preheatEnabled=${this._preheatEnabled}
+            .followDeviceSetpoint=${this._followDeviceSetpoint}
+            .showPreheat=${this._showPreheat()}
             .editing=${true}
             @schedules-changed=${this._onSchedulesChanged}
             @schedule-selector-changed=${this._onScheduleSelectorChanged}
@@ -774,6 +802,8 @@ export class RsRoomDetail extends LitElement {
             @comfort-cool-changed=${this._onComfortCoolChanged}
             @eco-heat-changed=${this._onEcoHeatChanged}
             @eco-cool-changed=${this._onEcoCoolChanged}
+            @preheat-changed=${this._onPreheatChanged}
+            @follow-device-setpoint-changed=${this._onFollowDeviceSetpointChanged}
           ></rs-schedule-settings>
         </rs-edit-dialog>`;
       case "devices":
@@ -831,6 +861,8 @@ export class RsRoomDetail extends LitElement {
             .temperatureSensor=${this._selectedTempSensor}
             .humiditySensor=${this._selectedHumiditySensor}
             .occupancySensors=${this._selectedOccupancySensors}
+            .occupancyEcoEnabled=${this._occupancyEcoEnabled}
+            .occupancyEcoDelay=${this._occupancyEcoDelay}
             .windowSensors=${this._selectedWindowSensors}
             .windowOpenDelay=${this._windowOpenDelay}
             .windowCloseDelay=${this._windowCloseDelay}
@@ -923,6 +955,9 @@ export class RsRoomDetail extends LitElement {
             .nightPosition=${this._coversNightPosition}
             .snapDeploy=${this._coversSnapDeploy}
             .forcedReason=${this.config?.live?.cover_forced_reason ?? ""}
+            .coverReason=${this.config?.live?.cover_reason ?? ""}
+            .windowHold=${this._coversWindowHold}
+            .hasWindowSensors=${this._selectedWindowSensors.size > 0}
             .autoPaused=${this._optimisticCoverResume
               ? false
               : (this.config?.live?.cover_auto_paused ?? false)}
@@ -994,6 +1029,32 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
+  /**
+   * Only where the pre-heat lead applies: MPC with a room sensor, not cool_only. Underfloor
+   * heating pre-heats through its own control, unless an orchestrated AC heats the room.
+   */
+  private _showPreheat(): boolean {
+    if (
+      this.controlMode !== "mpc" ||
+      !this._selectedTempSensor ||
+      this._climateMode === "cool_only"
+    ) {
+      return false;
+    }
+    const acHeats = this._heatSourceOrchestration && this._devices.some((d) => d.type === "ac");
+    return resolveHeatingSystemType(this._devices) !== "underfloor" || acHeats;
+  }
+
+  private _onPreheatChanged(e: CustomEvent<{ value: boolean }>) {
+    this._preheatEnabled = e.detail.value;
+    this._autoSave();
+  }
+
+  private _onFollowDeviceSetpointChanged(e: CustomEvent<{ value: boolean }>) {
+    this._followDeviceSetpoint = e.detail.value;
+    this._autoSave();
+  }
+
   private _onEcoCoolChanged(e: CustomEvent<{ value: number }>) {
     this._ecoCool = e.detail.value;
     if (this._ecoHeat > this._ecoCool) this._ecoHeat = this._ecoCool;
@@ -1026,7 +1087,9 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
-  private _onSensorChanged(e: CustomEvent<{ key: string; value: string | string[] | number }>) {
+  private _onSensorChanged(
+    e: CustomEvent<{ key: string; value: string | string[] | number | boolean }>,
+  ) {
     const { key, value } = e.detail;
     if (key === "temperature_sensor") {
       this._selectedTempSensor = value as string;
@@ -1034,6 +1097,10 @@ export class RsRoomDetail extends LitElement {
       this._selectedHumiditySensor = value as string;
     } else if (key === "occupancy_sensors") {
       this._selectedOccupancySensors = new Set(value as string[]);
+    } else if (key === "occupancy_eco_enabled") {
+      this._occupancyEcoEnabled = value as boolean;
+    } else if (key === "occupancy_eco_delay") {
+      this._occupancyEcoDelay = value as number;
     } else if (key === "window_sensors") {
       this._selectedWindowSensors = new Set(value as string[]);
     } else if (key === "window_open_delay") {
@@ -1103,6 +1170,7 @@ export class RsRoomDetail extends LitElement {
     else if (key === "covers_night_close") this._coversNightClose = value as boolean;
     else if (key === "covers_night_position") this._coversNightPosition = value as number;
     else if (key === "covers_snap_deploy") this._coversSnapDeploy = value as boolean;
+    else if (key === "covers_window_hold") this._coversWindowHold = value as boolean;
     else if (key === "cover_orientations")
       this._coverOrientations = value as Record<string, number>;
     else if (key === "covers_night_close_elevation")
@@ -1179,6 +1247,10 @@ export class RsRoomDetail extends LitElement {
         temperature_sensor: this._selectedTempSensor,
         humidity_sensor: this._selectedHumiditySensor,
         occupancy_sensors: [...this._selectedOccupancySensors],
+        occupancy_eco_enabled: this._occupancyEcoEnabled,
+        occupancy_eco_delay: this._occupancyEcoDelay,
+        preheat_enabled: this._preheatEnabled,
+        follow_device_setpoint: this._followDeviceSetpoint,
         window_sensors: [...this._selectedWindowSensors],
         window_open_delay: this._windowOpenDelay,
         window_close_delay: this._windowCloseDelay,
@@ -1202,6 +1274,7 @@ export class RsRoomDetail extends LitElement {
         covers_night_close: this._coversNightClose,
         covers_night_position: this._coversNightPosition,
         covers_snap_deploy: this._coversSnapDeploy,
+        covers_window_hold: this._coversWindowHold,
         cover_orientations: this._coverOrientations,
         covers_night_close_elevation: this._coversNightCloseElevation,
         covers_night_close_offset_minutes: this._coversNightCloseOffsetMinutes,

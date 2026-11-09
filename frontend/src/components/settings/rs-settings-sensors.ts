@@ -57,20 +57,18 @@ export class RsSettingsSensors extends RsSettingsBase {
                 if (v !== this.outdoorTempSensor) this._fire("outdoorTempSensor", v);
               }}
             ></ha-entity-picker>
-            ${
-              outdoorTemp !== null
-                ? html`<div class="current-value">
-                    ${localize("settings.outdoor_current", l, {
-                      temp: outdoorTemp.toFixed(1),
-                      unit: tempUnit(this.hass),
-                    })}
+            ${outdoorTemp !== null
+              ? html`<div class="current-value">
+                  ${localize("settings.outdoor_current", l, {
+                    temp: outdoorTemp.toFixed(1),
+                    unit: tempUnit(this.hass),
+                  })}
+                </div>`
+              : this.outdoorTempSensor
+                ? html`<div class="current-value muted">
+                    ${localize("settings.outdoor_waiting", l)}
                   </div>`
-                : this.outdoorTempSensor
-                  ? html`<div class="current-value muted">
-                      ${localize("settings.outdoor_waiting", l)}
-                    </div>`
-                  : nothing
-            }
+                : nothing}
           </div>
           <div class="sensor-field">
             <ha-entity-picker
@@ -85,19 +83,17 @@ export class RsSettingsSensors extends RsSettingsBase {
                 if (v !== this.outdoorHumiditySensor) this._fire("outdoorHumiditySensor", v);
               }}
             ></ha-entity-picker>
-            ${
-              outdoorHumidity !== null
-                ? html`<div class="current-value">
-                    ${localize("settings.outdoor_humidity_current", l, {
-                      value: String(outdoorHumidity),
-                    })}
+            ${outdoorHumidity !== null
+              ? html`<div class="current-value">
+                  ${localize("settings.outdoor_humidity_current", l, {
+                    value: String(outdoorHumidity),
+                  })}
+                </div>`
+              : this.outdoorHumiditySensor
+                ? html`<div class="current-value muted">
+                    ${localize("settings.outdoor_waiting", l)}
                   </div>`
-                : this.outdoorHumiditySensor
-                  ? html`<div class="current-value muted">
-                      ${localize("settings.outdoor_waiting", l)}
-                    </div>`
-                  : nothing
-            }
+                : nothing}
           </div>
         </div>
       </div>

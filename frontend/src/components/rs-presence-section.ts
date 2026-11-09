@@ -209,12 +209,10 @@ export class RsPresenceSection extends LitElement {
         .checked=${this.ignorePresence}
         @toggle-changed=${this._onIgnoreToggle}
       ></rs-toggle-row>
-      ${
-        !this.ignorePresence
-          ? html`<div class="section-divider"></div>
-              ${this._renderEditMode()}`
-          : nothing
-      }
+      ${!this.ignorePresence
+        ? html`<div class="section-divider"></div>
+            ${this._renderEditMode()}`
+        : nothing}
     `;
   }
 
@@ -255,13 +253,11 @@ export class RsPresenceSection extends LitElement {
           `;
         })}
       </div>
-      ${
-        hasMissing
-          ? html`<div class="missing-hint">
-              ${localize("presence.missing_entity_hint", this.language)}
-            </div>`
-          : nothing
-      }
+      ${hasMissing
+        ? html`<div class="missing-hint">
+            ${localize("presence.missing_entity_hint", this.language)}
+          </div>`
+        : nothing}
     `;
   }
 
@@ -295,11 +291,9 @@ export class RsPresenceSection extends LitElement {
               <span class="presence-name">${name}</span>
               ${this._isMissing(pid) ? this._renderMissingIcon() : nothing}
               <span class="presence-state"
-                >${
-                  isHome
-                    ? localize("presence.state_home", this.language)
-                    : localize("presence.state_away", this.language)
-                }</span
+                >${isHome
+                  ? localize("presence.state_home", this.language)
+                  : localize("presence.state_away", this.language)}</span
               >
             </div>
           `;
