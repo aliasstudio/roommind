@@ -93,6 +93,7 @@ AC_BOOST_DELTA_MIN = 3.0  # Tightest AC setpoint cap (°C above/below target) at
 AC_BOOST_DELTA_MAX = 50.0  # Comfort-end AC cap (°C); finite value above any real device range so the cap never binds (inf would break the linear slider interpolation)
 PROPORTIONAL_DEADBAND_C = 0.5  # Minimum proportional setpoint change (°C) to resend, in the gentle regime
 PROPORTIONAL_DEADBAND_NEAR_TARGET_C = 0.2  # Finer proportional deadband (°C) within 1°C of target
+PROPORTIONAL_STEP_MIN_INTERVAL_SECONDS = 300  # Minimum time between one-step proportional setpoint changes
 PROPORTIONAL_BAND_MIN = 0.5  # °C minimum proportional band for smooth gap-closing without hair-trigger saturation
 # Anti-short-cycle: hysteresis on starting a fresh heat/cool run, scaled by comfort_weight.
 START_DEADBAND_MIN_C = 0.15  # Tightest start hysteresis (°C past target) at comfort_weight >= DEFAULT_COMFORT_WEIGHT
@@ -300,3 +301,4 @@ DEFAULT_VALVE_MIN_OPENING = 10  # % — below this a TRVZB barely passes water
 DEFAULT_VALVE_MAX_OPENING = 100  # % — some heads cap below 100
 DEFAULT_VALVE_OPENING_THRESHOLD = 5  # % demand below which the valve is shut
 DEFAULT_VALVE_DEADBAND = 5  # % — smaller changes are not sent (battery/motor wear)
+VALVE_MIN_SWITCH_SECONDS = 300  # Minimum time between a regulated valve shutting and opening again

@@ -15,6 +15,7 @@ position is whatever we write to the number entities.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
@@ -24,6 +25,7 @@ from ..const import (
     DEFAULT_VALVE_MAX_OPENING,
     DEFAULT_VALVE_MIN_OPENING,
     DEFAULT_VALVE_OPENING_THRESHOLD,
+    VALVE_MIN_SWITCH_SECONDS,
     make_roommind_context,
 )
 from ..utils.device_utils import SETPOINT_MODE_VALVE, get_device_by_eid
@@ -33,11 +35,18 @@ _LOGGER = logging.getLogger(__name__)
 # Last opening degree written per opening-degree entity, for deadband
 # suppression. Mirrors the command cache in mpc_controller.
 _last_opening: dict[str, int] = {}
+# When each opening-degree entity last went from shut to open or back.
+_switched_at: dict[str, float] = {}
+
+
+def _now() -> float:
+    return time.monotonic()
 
 
 def clear_valve_cache() -> None:
     """Forget the last written opening degrees (tests, reload)."""
     _last_opening.clear()
+    _switched_at.clear()
 
 
 @dataclass(frozen=True)
@@ -126,9 +135,24 @@ async def async_apply_valve_demand(
 
     Changes smaller than the configured deadband are skipped, except for a
     full close/open which must always land.
+
+    A demand hovering around the opening threshold would otherwise run the
+    motor from shut to open and back on every flicker of the room sensor.
+    An open valve therefore stays at its minimum opening until the demand
+    has dropped a deadband below the threshold, and a valve that just shut
+    or opened keeps that side for ``VALVE_MIN_SWITCH_SECONDS``. No demand at
+    all (idle, window open) shuts it at once.
     """
     degree = calculate_opening_degree(demand_percent, config)
     previous = _last_opening.get(config.opening_entity)
+    if not force and previous is not None and demand_percent > 0:
+        switched_at = _switched_at.get(config.opening_entity)
+        is_settling = switched_at is not None and _now() - switched_at < VALVE_MIN_SWITCH_SECONDS
+        if previous == 0 and degree > 0 and is_settling:
+            return
+        is_within_hysteresis = demand_percent >= config.opening_threshold - config.deadband
+        if previous > 0 and degree == 0 and (is_settling or is_within_hysteresis):
+            degree = config.min_opening
     is_endpoint = degree in (0, config.max_opening)
     if not force and previous is not None and not is_endpoint and abs(degree - previous) < config.deadband:
         return
@@ -136,6 +160,8 @@ async def async_apply_valve_demand(
     await _async_set_number(hass, config.opening_entity, degree, area_id=area_id)
     if config.closing_entity:
         await _async_set_number(hass, config.closing_entity, 100 - degree, area_id=area_id)
+    if previous is not None and (previous == 0) != (degree == 0):
+        _switched_at[config.opening_entity] = _now()
     _last_opening[config.opening_entity] = degree
     _LOGGER.debug(
         "Area '%s': TRV '%s' demand %.0f%% → opening degree %d%%",

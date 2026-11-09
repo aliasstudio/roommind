@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from custom_components.roommind.const import TargetTemps
+from custom_components.roommind.const import VALVE_MIN_SWITCH_SECONDS, TargetTemps
 from custom_components.roommind.control.mpc_controller import (
     MPCController,
     async_idle_device,
@@ -16,6 +16,7 @@ from custom_components.roommind.control.mpc_controller import (
 from custom_components.roommind.control.thermal_model import RoomModelManager
 from custom_components.roommind.control.valve_regulation import (
     ValveConfig,
+    async_apply_valve_demand,
     calculate_opening_degree,
     clear_valve_cache,
     get_valve_config,
@@ -195,6 +196,62 @@ async def test_deadband_suppresses_small_changes_but_not_full_close():
         {"entity_id": OPENING, "value": 0},
         {"entity_id": CLOSING, "value": 100},
     ]
+
+
+async def _apply_demands(hass, *demands):
+    for demand in demands:
+        await async_apply_valve_demand(hass, "climate.living_trv", CONFIG, demand)
+    return [call["value"] for call in number_calls(hass) if call["entity_id"] == OPENING]
+
+
+@pytest.fixture
+def valve_clock(monkeypatch):
+    from custom_components.roommind.control import valve_regulation
+
+    clock = [1000.0]
+    monkeypatch.setattr(valve_regulation, "_now", lambda: clock[0])
+    return clock
+
+
+@pytest.mark.asyncio
+async def test_open_valve_rides_out_demand_flicker_below_threshold(valve_clock):
+    """Demand dithering around the threshold must not run the motor shut and open."""
+    hass = build_valve_hass()
+    assert await _apply_demands(hass, 6, 4, 6, 4) == [11]
+
+
+@pytest.mark.asyncio
+async def test_valve_shuts_once_demand_clears_hysteresis(valve_clock):
+    hass = build_valve_hass()
+    await _apply_demands(hass, 20)
+    valve_clock[0] += VALVE_MIN_SWITCH_SECONDS
+    # threshold 5 - deadband 5: only no demand at all shuts this one
+    assert await _apply_demands(hass, 1, 0) == [24, 10, 0]
+
+
+@pytest.mark.asyncio
+async def test_valve_keeps_its_side_for_min_switch_interval(valve_clock):
+    hass = build_valve_hass()
+    config = ValveConfig(OPENING, None, min_opening=10, max_opening=100, opening_threshold=20, deadband=5)
+
+    async def apply(demand):
+        await async_apply_valve_demand(hass, "climate.living_trv", config, demand)
+        return [call["value"] for call in number_calls(hass)]
+
+    await apply(0)
+    await apply(50)  # opens: the first transition starts the interval
+    assert await apply(10) == [0, 44, 10]  # below the hysteresis, yet held open
+    valve_clock[0] += VALVE_MIN_SWITCH_SECONDS
+    assert (await apply(10))[-1] == 0
+    assert (await apply(50))[-1] == 0  # just shut: stays shut
+    valve_clock[0] += VALVE_MIN_SWITCH_SECONDS
+    assert (await apply(50))[-1] == 44
+
+
+@pytest.mark.asyncio
+async def test_zero_demand_shuts_valve_despite_min_switch_interval(valve_clock):
+    hass = build_valve_hass()
+    assert await _apply_demands(hass, 0, 50, 0) == [0, 53, 0]
 
 
 @pytest.mark.asyncio
