@@ -2622,9 +2622,24 @@ class MPCController:
         return True
 
     async def _async_release_valve(self, eid: str) -> None:
-        """Give a TRV with direct valve control its own regulation back (also in Managed Mode)."""
+        """Shut an idle TRV with direct valve control; Managed Mode gives the TRV its own regulation back.
+
+        Handed back (100/100) an on/off head reopens on its own sensor, which reads the cold
+        window rather than the room, and the opening degree no longer shows the position.
+        """
         valve = self._valve_entities.get(eid)
-        if valve is not None:
+        if valve is not None and eid in self._valve_eids:
+            await async_set_valve(
+                self.hass,
+                eid,
+                valve.opening,
+                valve.closing,
+                0,
+                area_id=self._area_id,
+                urgent=True,
+                idle_opening=valve.idle_opening,
+            )
+        elif valve is not None:
             await async_release_valve(
                 self.hass, eid, valve.opening, valve.closing, area_id=self._area_id, idle_opening=valve.idle_opening
             )
