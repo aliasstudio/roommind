@@ -56,3 +56,5 @@ roommind:
 expect:
   - {invariant: target_never_empty}
   - {invariant: no_rejected_commands}
+  # 9 % with offsets above 4 K discarded as a broken sensor: setpoints in the room's frame barely made the unit heat
+  - {metric: comfort.in_band_pct, room: spalnia, min: 95, label: the learned 6 K offset lets the AC hold the room}
