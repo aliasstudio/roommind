@@ -1,13 +1,15 @@
 /**
  * rs-analytics – Analytics tab orchestrator.
- * Delegates rendering to rs-analytics-toolbar, rs-analytics-chart, rs-analytics-model.
+ * Delegates rendering to rs-analytics-toolbar, -summary, -chart, -rhythm and -model.
  */
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, RoomConfig, AnalyticsData } from "../types";
 import { localize } from "../utils/localize";
 import "./analytics/rs-analytics-toolbar";
+import "./analytics/rs-analytics-summary";
 import "./analytics/rs-analytics-chart";
+import "./analytics/rs-analytics-rhythm";
 import "./analytics/rs-analytics-model";
 
 @customElement("rs-analytics")
@@ -15,7 +17,7 @@ export class RsAnalytics extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Object }) public rooms: Record<string, RoomConfig> = {};
   @property() public initialRoom = "";
-  @property() public controlMode: "mpc" | "bangbang" = "bangbang";
+  @property() public controlMode: "mpc" | "bangbang" = "mpc";
 
   @state() private _selectedRoom = "";
   @state() private _rangeStart: number = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
@@ -26,6 +28,8 @@ export class RsAnalytics extends LitElement {
   @state() private _activeQuick: string | null = "24h";
 
   private _refreshInterval?: ReturnType<typeof setInterval>;
+  private _dataRoom = "";
+  private _fetchId = 0;
 
   connectedCallback() {
     super.connectedCallback();
@@ -87,41 +91,61 @@ export class RsAnalytics extends LitElement {
         @room-selected=${this._onRoomSelected}
         @range-changed=${this._onRangeChanged}
       ></rs-analytics-toolbar>
-      ${
-        this._selectedRoom
-          ? this._loading
-            ? html`<div class="loading">${localize("panel.loading", l)}</div>`
-            : html`
-                <rs-analytics-chart
-                  .hass=${this.hass}
-                  .data=${this._data}
-                  .rangeStart=${this._rangeStart}
-                  .rangeEnd=${this._rangeEnd}
-                  .chartAnchor=${this._chartAnchor}
-                  .language=${l}
-                  .isOutdoor=${this.rooms[this._selectedRoom]?.is_outdoor ?? false}
-                ></rs-analytics-chart>
-                ${
-                  !this.rooms[this._selectedRoom]?.is_outdoor
-                    ? html` <rs-analytics-model
-                        .hass=${this.hass}
-                        .data=${this._data}
-                        .language=${l}
-                      ></rs-analytics-model>`
-                    : nothing
-                }
-              `
+      ${this._selectedRoom
+        ? this._loading && !this._data
+          ? html`<div class="loading">${localize("panel.loading", l)}</div>`
           : html`
-              <div class="no-data">
-                <ha-icon
-                  icon="mdi:chart-line"
-                  style="--mdc-icon-size: 48px; opacity: 0.4"
-                ></ha-icon>
-                <p>${localize("analytics.select_room", l)}</p>
-              </div>
+              ${this._renderSummary()}
+              <rs-analytics-chart
+                .hass=${this.hass}
+                .data=${this._data}
+                .rangeStart=${this._rangeStart}
+                .rangeEnd=${this._rangeEnd}
+                .chartAnchor=${this._chartAnchor}
+                .language=${l}
+                .isOutdoor=${this.rooms[this._selectedRoom]?.is_outdoor ?? false}
+              ></rs-analytics-chart>
+              ${!this.rooms[this._selectedRoom]?.is_outdoor
+                ? html`<rs-analytics-rhythm
+                    .hass=${this.hass}
+                    .rhythm=${this._data?.rhythm ?? null}
+                    .rangeStart=${this._rangeStart}
+                    .rangeEnd=${this._rangeEnd}
+                    .language=${l}
+                    @day-selected=${this._onDaySelected}
+                  ></rs-analytics-rhythm>`
+                : nothing}
+              ${!this.rooms[this._selectedRoom]?.is_outdoor
+                ? html` <rs-analytics-model
+                    .hass=${this.hass}
+                    .data=${this._data}
+                    .language=${l}
+                    .controlMode=${this.controlMode}
+                    .managed=${!this.rooms[this._selectedRoom]?.temperature_sensor}
+                  ></rs-analytics-model>`
+                : nothing}
             `
-      }
+        : html`
+            <div class="no-data">
+              <ha-icon icon="mdi:chart-line" style="--mdc-icon-size: 48px; opacity: 0.4"></ha-icon>
+              <p>${localize("analytics.select_room", l)}</p>
+            </div>
+          `}
     `;
+  }
+
+  private _renderSummary() {
+    const room = this.rooms[this._selectedRoom];
+    if (!room || room.is_outdoor) return nothing;
+    return html`<rs-analytics-summary
+      .hass=${this.hass}
+      .stats=${this._data?.stats ?? null}
+      .canHeat=${room.climate_mode !== "cool_only"}
+      .canCool=${room.climate_mode !== "heat_only" &&
+      (room.devices ?? []).some((d) => d.type === "ac")}
+      .hasWindowSensor=${(room.window_sensors?.length ?? 0) > 0}
+      .language=${this.hass.language}
+    ></rs-analytics-summary>`;
   }
 
   private _onRoomSelected(e: CustomEvent) {
@@ -146,6 +170,20 @@ export class RsAnalytics extends LitElement {
     this._chartAnchor = chartAnchor;
   }
 
+  private async _onDaySelected(e: CustomEvent<string>) {
+    const now = Date.now();
+    const end = new Date(`${e.detail}T23:59:59`).getTime();
+    this._activeQuick = end >= now ? "24h" : null;
+    this._rangeStart = new Date(`${e.detail}T00:00:00`).getTime();
+    this._rangeEnd = Math.min(end, now);
+    this._chartAnchor = this._rangeEnd;
+    await this.updateComplete;
+    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.renderRoot
+      .querySelector("rs-analytics-chart")
+      ?.scrollIntoView({ block: "nearest", behavior: smooth ? "smooth" : "auto" });
+  }
+
   private _buildWsParams(): Record<string, unknown> {
     return {
       type: "roommind/analytics/get",
@@ -157,19 +195,22 @@ export class RsAnalytics extends LitElement {
 
   private async _fetchData() {
     if (!this._selectedRoom) return;
+    const fetchId = ++this._fetchId;
     this._loading = true;
-    this._data = null;
+    // Same room: the old data stays up, so a new range does not reset scroll and open views
+    if (this._dataRoom !== this._selectedRoom) this._data = null;
+    this._dataRoom = this._selectedRoom;
     this._chartAnchor = this._rangeEnd;
 
     try {
       const result = await this.hass.callWS<AnalyticsData>(this._buildWsParams());
-      this._data = result;
+      if (fetchId === this._fetchId) this._data = result;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.debug("[RoomMind] fetchData:", err);
-      this._data = null;
+      if (fetchId === this._fetchId) this._data = null;
     } finally {
-      this._loading = false;
+      if (fetchId === this._fetchId) this._loading = false;
     }
   }
 
@@ -188,6 +229,10 @@ export class RsAnalytics extends LitElement {
   static styles = css`
     :host {
       display: block;
+    }
+
+    rs-analytics-chart {
+      scroll-margin-top: 120px;
     }
 
     .no-data {

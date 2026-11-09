@@ -19,7 +19,7 @@ from custom_components.roommind.managers.ac_coil_dry_manager import AcCoilDryMan
 def _make_estimator():
     """Build a mock ThermalEKF estimator."""
     est = MagicMock()
-    est._x = [20.0, 0.5, 100.0, 80.0, 10.0, 0.3, 0.4]
+    est._x = [20.0, 0.5, 100.0, 80.0, 10.0, 0.3, 12.0]
     est._n_updates = 200
     est._n_idle = 120
     est._n_heating = 60
@@ -94,7 +94,7 @@ def test_build_model_info():
     assert info["alpha"] == 0.5
     assert info["beta_h"] == 100.0
     assert info["beta_c"] == 80.0
-    assert info["g"] == 0.4
+    assert info["beta_f"] == 12.0
     assert info["n_updates"] == 200
     assert info["n_idle"] == 120
     assert info["n_heating"] == 60
@@ -177,6 +177,8 @@ async def test_diagnostics_with_coordinator_and_model(hass, mock_config_entry):
     assert result["outdoor"]["forecast_available"] is False
     assert result["presence"]["enabled"] is True
     assert result["presence"]["person_states"]["person.alice"] == "home"
+    # control_mode was never saved: the export shows the effective default
+    assert result["settings"]["control_mode"] == "mpc"
 
 
 @pytest.mark.asyncio
@@ -321,6 +323,7 @@ def test_build_device_states_with_ha_state(hass):
     assert dev["type"] == "ac"
     assert dev["idle_action"] == "fan_only"
     assert dev["idle_fan_mode"] == "low"
+    assert dev["setback_auto_off"] is False
     assert dev["ha_state"] == "heat"
     assert dev["hvac_modes"] == ["off", "heat", "cool", "fan_only"]
     assert dev["current_temperature"] == 21.5

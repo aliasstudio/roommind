@@ -8,7 +8,6 @@ import pytest
 
 from custom_components.roommind.control.mpc_controller import (
     MPCController,
-    clear_command_cache,
 )
 from custom_components.roommind.control.thermal_model import RCModel, RoomModelManager
 
@@ -606,9 +605,10 @@ def _mock_device(hass, setpoint):
     return dev
 
 
-def test_proportional_deadband_helper_disabled_at_comfort():
+def test_proportional_deadband_helper_exact_at_comfort():
     _, ctrl = _make_controller(None)  # cw=70 default
-    assert ctrl._proportional_deadband("climate.x", 18.0, 22.0) is None
+    # 0.0 still marks the send as proportional (setpoint dwell) but compares exactly
+    assert ctrl._proportional_deadband("climate.x", 18.0, 22.0) == 0.0
 
 
 def test_proportional_deadband_helper_values_at_efficiency():
@@ -717,60 +717,6 @@ async def test_call_deadband_converts_to_fahrenheit_units():
     )
     sent = [c for c in hass.services.async_call.call_args_list if c[0][1] == "set_temperature"]
     assert len(sent) == 1
-
-
-def _mock_step_device(hass, setpoint):
-    dev = MagicMock()
-    dev.state = "heat"
-    dev.attributes = {
-        "hvac_modes": ["heat", "off"],
-        "temperature": setpoint,
-        "min_temp": 16.0,
-        "max_temp": 30.0,
-        "target_temp_step": 1.0,
-    }
-    hass.states.get = MagicMock(return_value=dev)
-
-
-async def _send_proportional(hass, ctrl, temperature):
-    hass.services.async_call.reset_mock()
-    await ctrl._call(
-        "set_temperature", {"entity_id": "climate.x", "temperature": temperature}, temp_intent="heat", deadband=0.2
-    )
-    return [c[0][2]["temperature"] for c in hass.services.async_call.call_args_list if c[0][1] == "set_temperature"]
-
-
-@pytest.mark.asyncio
-async def test_step_device_ignores_flicker_across_rounding_boundary():
-    """25.4 snaps to 25 and 25.5 to 26: the boundary alone must not move a 1 degree device."""
-    clear_command_cache()
-    hass, ctrl = _make_controller(0)
-    _mock_step_device(hass, setpoint=26.0)
-    assert await _send_proportional(hass, ctrl, 25.4) == []
-    assert await _send_proportional(hass, ctrl, 25.2) == [25.0]
-
-
-@pytest.mark.asyncio
-async def test_step_device_holds_single_step_change_for_min_interval(monkeypatch):
-    from custom_components.roommind.const import PROPORTIONAL_STEP_MIN_INTERVAL_SECONDS
-    from custom_components.roommind.control import mpc_controller
-
-    clear_command_cache()
-    clock = [1000.0]
-    monkeypatch.setattr(mpc_controller, "_now", lambda: clock[0])
-    hass, ctrl = _make_controller(0)
-    _mock_step_device(hass, setpoint=26.0)
-    assert await _send_proportional(hass, ctrl, 25.0) == [25.0]
-
-    _mock_step_device(hass, setpoint=25.0)
-    clock[0] += 60
-    assert await _send_proportional(hass, ctrl, 26.0) == []  # one step back, a minute later
-    assert await _send_proportional(hass, ctrl, 27.0) == [27.0]  # a real change passes at once
-
-    _mock_step_device(hass, setpoint=27.0)
-    clock[0] += PROPORTIONAL_STEP_MIN_INTERVAL_SECONDS
-    assert await _send_proportional(hass, ctrl, 26.0) == [26.0]
-    clear_command_cache()
 
 
 def _make_cooling_ac_controller(hass_temperature: float = 23.0):

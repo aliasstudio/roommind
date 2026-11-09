@@ -37,6 +37,8 @@ from ..utils.device_utils import get_ac_eids, get_trv_eids, has_reliable_hvac_mo
 
 _LOGGER = logging.getLogger(__name__)
 
+_RUNNING_SOURCES = ("primary", "secondary", "both")
+
 
 @dataclass
 class DeviceCommand:
@@ -125,6 +127,31 @@ def evaluate_heat_sources(
     # Which group the outdoor preference resolves to, now that either type can lead
     ac_group = "primary" if ac_is_primary else "secondary"
     trv_group = "secondary" if ac_is_primary else "primary"
+
+    # Early exit: at or above target, no heating needed. A run in progress keeps its
+    # sources instead: the controller deliberately heats at the target (min-run
+    # continuation, holding power), and parking everything there switched the
+    # devices on and off every cycle around the target.
+    if delta_t <= 0 and previous_active_sources not in _RUNNING_SOURCES:
+        idle_cmds = [
+            DeviceCommand(
+                entity_id=eid,
+                role=role,
+                device_type=device_type,
+                active=False,
+                power_fraction=0.0,
+                reason="not selected",
+            )
+            for role, devices in (("primary", primary_devices), ("secondary", secondary_devices))
+            for eid, device_type in devices
+        ]
+        _LOGGER.debug(
+            "Room '%s': heat source orchestration → none (delta_t=%.1f, outdoor=%s)",
+            room_config.get("area_id", "?"),
+            delta_t,
+            outdoor_temp,
+        )
+        return HeatSourcePlan(commands=idle_cmds, active_sources="none", reason="delta_t <= 0")
 
     # Hardware protection: disable AC heating in extreme cold
     is_ac_too_cold = outdoor_temp is not None and outdoor_temp < ac_min_outdoor

@@ -315,12 +315,12 @@ def test_ekf_psd_preserved():
         T = T_new
 
         P = ekf._P
-        # Verify all diagonals are non-negative (7D: T, alpha, beta_h, beta_c, beta_s, beta_o, g)
-        for i in range(7):
+        # Verify all diagonals are non-negative (6D: T, alpha, beta_h, beta_c, beta_s, beta_o)
+        for i in range(6):
             assert P[i][i] >= 0, f"P[{i}][{i}] negative at step {step}: {P[i][i]}"
         # Verify symmetry
-        for i in range(7):
-            for j in range(i + 1, 7):
+        for i in range(6):
+            for j in range(i + 1, 6):
                 assert abs(P[i][j] - P[j][i]) < 1e-8, f"P not symmetric at [{i}][{j}] step {step}"
 
 
@@ -363,13 +363,13 @@ def test_ekf_serialization_roundtrip():
     data = ekf.to_dict()
     restored = ThermalEKF.from_dict(data)
 
-    # Verify state vector (7D with beta_s + beta_o + g)
-    for i in range(7):
+    # Verify state vector (6D with beta_s + beta_o)
+    for i in range(6):
         assert restored._x[i] == pytest.approx(ekf._x[i], rel=1e-6)
 
-    # Verify P matrix (7×7)
-    for i in range(7):
-        for j in range(7):
+    # Verify P matrix (6×6)
+    for i in range(6):
+        for j in range(6):
             assert restored._P[i][j] == pytest.approx(ekf._P[i][j], rel=1e-6)
 
     # Verify counters
@@ -382,13 +382,13 @@ def test_ekf_serialization_roundtrip():
     assert restored.confidence == pytest.approx(ekf.confidence, abs=0.01)
 
     # Verify serialization metadata
-    assert data["ekf_version"] == 7
+    assert data["ekf_version"] == 6
 
 
 def test_ekf_get_model_c1_normalization():
     """get_model() returns RCModel with C=1, U=alpha, Q_heat=beta_h, Q_cool=beta_c, Q_solar=beta_s, Q_occupancy=beta_o."""
     ekf = ThermalEKF()
-    ekf._x = [20.0, 3.5, 60.0, 80.0, 15.0, 0.3, 0.4]
+    ekf._x = [20.0, 3.5, 60.0, 80.0, 15.0, 0.3, 0.0]
 
     model = ekf.get_model()
     assert model.C == pytest.approx(1.0)
@@ -397,7 +397,6 @@ def test_ekf_get_model_c1_normalization():
     assert model.Q_cool == pytest.approx(80.0)
     assert model.Q_solar == pytest.approx(15.0)
     assert model.Q_occupancy == pytest.approx(0.3)
-    assert model.Q_internal == pytest.approx(0.4)
 
 
 # ---------------------------------------------------------------------------
@@ -1563,7 +1562,7 @@ def test_rc_model_q_occupancy_zero_no_effect():
 
 
 def test_ekf_7d_state_vector():
-    """EKF should have 7D state vector after the internal-gain upgrade."""
+    """EKF should have 7D state vector after upgrade (beta_f)."""
     ekf = ThermalEKF()
     assert ekf._N == 7
     assert len(ekf._x) == 7
@@ -1596,8 +1595,8 @@ def test_ekf_get_model_includes_q_occupancy():
     assert model.Q_occupancy >= 0.0
 
 
-def test_ekf_from_dict_5d_to_7d():
-    """Old 5D persisted data should be extended to 7D on load (beta_o + g)."""
+def test_ekf_from_dict_5d_to_6d():
+    """Old 5D persisted data should be extended to 6D on load."""
     old_data = {
         "ekf_version": 3,
         "x": [20.0, 0.15, 3.0, 4.0, 0.5],
@@ -1618,141 +1617,25 @@ def test_ekf_from_dict_5d_to_7d():
     assert ekf._x[0] == pytest.approx(20.0)
     assert ekf._x[1] == pytest.approx(0.15)
     assert ekf._x[4] == pytest.approx(0.5)
-    # beta_o and g extended with defaults
+    # beta_o extended with default
     assert ekf._x[5] == pytest.approx(ThermalEKF._DEFAULT_BETA_O)
-    assert ekf._x[6] == pytest.approx(ThermalEKF._DEFAULT_G)
-    assert ekf._P[6][6] == pytest.approx(ThermalEKF._P_INIT_G)
     # Counters preserved
     assert ekf._n_updates == 100
 
 
-def test_ekf_from_dict_6d_to_7d():
-    """Old 6D persisted data (pre-internal-gain) is extended to 7D on load."""
-    old_data = {
-        "ekf_version": 6,
-        "x": [20.0, 0.15, 3.0, 4.0, 0.5, 0.3],
-        "P": [[0.5 if i == j else 0.0 for j in range(6)] for i in range(6)],
-        "n_updates": 100,
-        "initialized": True,
-    }
-    ekf = ThermalEKF.from_dict(old_data)
-    assert len(ekf._x) == 7
-    assert all(len(row) == 7 for row in ekf._P)
-    assert ekf._x[5] == pytest.approx(0.3)  # beta_o preserved
-    assert ekf._x[6] == pytest.approx(ThermalEKF._DEFAULT_G)
-    assert ekf._P[6][6] == pytest.approx(ThermalEKF._P_INIT_G)
-
-
-def test_ekf_from_dict_7d_roundtrip():
-    """to_dict/from_dict preserves all 7 parameters."""
+def test_ekf_from_dict_6d_roundtrip():
+    """to_dict/from_dict preserves all 6 parameters."""
     ekf = ThermalEKF()
     ekf.update(T_measured=20.0, T_outdoor=5.0, mode="idle", dt_minutes=5.0, q_occupancy=1.0)
     ekf.update(T_measured=20.5, T_outdoor=5.0, mode="idle", dt_minutes=5.0, q_occupancy=1.0)
     data = ekf.to_dict()
-    assert data["ekf_version"] == 7
+    assert data["ekf_version"] == 6
     restored = ThermalEKF.from_dict(data)
-    for i in range(7):
+    for i in range(6):
         assert restored._x[i] == pytest.approx(ekf._x[i], rel=1e-6)
-    for i in range(7):
-        for j in range(7):
+    for i in range(6):
+        for j in range(6):
             assert restored._P[i][j] == pytest.approx(ekf._P[i][j], rel=1e-6)
-
-
-def test_rcmodel_internal_gain_raises_equilibrium():
-    """A positive Q_internal warms the room's equilibrium above outdoor."""
-    base = RCModel(C=1.0, U=0.2, Q_heat=0.0, Q_cool=0.0)
-    warmed = RCModel(C=1.0, U=0.2, Q_heat=0.0, Q_cool=0.0, Q_internal=0.5)
-    # From equal starts and no HVAC, the internal-gain model stays warmer.
-    T_base = base.predict(T_room=18.0, T_outdoor=10.0, Q_active=0.0, dt_minutes=120)
-    T_warm = warmed.predict(T_room=18.0, T_outdoor=10.0, Q_active=0.0, dt_minutes=120)
-    assert T_warm > T_base
-
-
-def test_ekf_learns_internal_gain_and_decouples_alpha():
-    """With a steady internal gain, the EKF recovers both g and alpha from idle
-    data (given outdoor variation) instead of biasing alpha — the core reason
-    the internal-gain state exists."""
-    true = RCModel(C=1.0, U=0.2, Q_heat=3.0, Q_cool=4.0, Q_internal=0.5)
-    ekf = ThermalEKF(T_init=22.0)
-    outs = [10.0, 12.0, 8.0, 15.0, 6.0, 11.0, 9.0, 14.0]  # vary → identifiable
-    T = 22.0
-    ekf.update(T_measured=T, T_outdoor=outs[0], mode="idle", dt_minutes=5.0)
-    for step in range(400):
-        T_out = outs[step % len(outs)]
-        T_new = true.predict(T, T_out, 0.0, dt_minutes=5.0)
-        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
-        T = T_new
-    model = ekf.get_model()
-    assert model.Q_internal == pytest.approx(0.5, abs=0.15)
-    assert model.U == pytest.approx(0.2, abs=0.05)
-
-
-def test_clamped_parameter_is_decoupled_from_the_rest():
-    """A parameter pinned at a bound loses its cross-covariance.
-
-    Otherwise the filter keeps pushing into the wall and drags correlated
-    parameters with it (this is what drove g to zero once alpha pinned).
-    """
-    ekf = ThermalEKF()
-    # Correlate alpha with everything, then shove it past its floor.
-    for j in range(ekf._N):
-        if j != 1:
-            ekf._P[1][j] = 0.3
-            ekf._P[j][1] = 0.3
-    ekf._x[1] = ThermalEKF._ALPHA_MIN - 1.0
-    ekf._clamp_parameters()
-
-    assert ekf._x[1] == ThermalEKF._ALPHA_MIN  # pinned at the bound
-    for j in range(ekf._N):
-        if j != 1:
-            assert ekf._P[1][j] == 0.0, f"P[1][{j}] should be decoupled"
-            assert ekf._P[j][1] == 0.0, f"P[{j}][1] should be decoupled"
-    assert ekf._P[1][1] != 0.0  # own variance is kept
-
-
-def test_unclamped_parameters_keep_their_covariance():
-    """Parameters inside their bounds are left alone — no behavior change for a
-    healthy, converged filter."""
-    ekf = ThermalEKF()
-    for j in range(ekf._N):
-        if j != 1:
-            ekf._P[1][j] = 0.3
-            ekf._P[j][1] = 0.3
-    ekf._x[1] = (ThermalEKF._ALPHA_MIN + ThermalEKF._ALPHA_MAX) / 2  # comfortably inside
-    ekf._clamp_parameters()
-
-    for j in range(ekf._N):
-        if j != 1:
-            assert ekf._P[1][j] == 0.3
-            assert ekf._P[j][1] == 0.3
-
-
-def test_pinned_alpha_does_not_drag_internal_gain_down():
-    """Regression: a room warming while warmer than outdoors must raise g.
-
-    With alpha pinned at its floor, the alpha<->g correlation used to flip the
-    sign of g's Kalman gain, so every "warmer than predicted" reading pushed the
-    internal gain toward zero instead of up.
-    """
-    ekf = ThermalEKF(T_init=22.8)
-    ekf.set_applicable_modes(can_heat=False, can_cool=True)
-    ekf._x[1] = ThermalEKF._ALPHA_MIN  # start pinned, as a young filter does
-    T = 22.8
-    for _ in range(80):  # ~4 h of idle warming, room always warmer than outdoors
-        T += 0.017  # ~+0.33 °C/h
-        ekf.update(T_measured=round(T, 1), T_outdoor=16.0, mode="idle", dt_minutes=3.0)
-
-    assert ekf._x[6] > 0.1, f"internal gain collapsed to {ekf._x[6]:.3f} despite steady warming"
-
-
-def test_ekf_internal_gain_stays_within_bounds():
-    """g is clamped to [_G_MIN, _G_MAX] under extreme data."""
-    ekf = ThermalEKF()
-    ekf.update(T_measured=20.0, T_outdoor=10.0, mode="idle", dt_minutes=5.0)
-    for i in range(60):
-        T_wild = 20.0 + (8.0 if i % 2 == 0 else -8.0)
-        ekf.update(T_measured=T_wild, T_outdoor=10.0, mode="idle", dt_minutes=5.0)
-    assert ThermalEKF._G_MIN <= ekf._x[6] <= ThermalEKF._G_MAX
 
 
 def test_ekf_prediction_std_with_q_occupancy():
@@ -1886,12 +1769,12 @@ def test_reset_migration_lands_above_param_bounds():
 
 
 def test_from_dict_resets_corrupt_5d_legacy():
-    """5D ekf_version=3 with alpha=5 is first extended to 7D, then reset.
-    All parameters end up at their defaults; _P is 7×7 with off-diagonals
+    """5D ekf_version=3 with alpha=5 is first extended to 6D, then reset.
+    All six parameters end up at their defaults; _P is 6×6 with off-diagonals
     zero and parameter diagonals at _P_INIT_*."""
     data = {
         "ekf_version": 3,
-        "x": [20.0, 5.0, 65.0, 20.0, 5.0],  # 5D (no beta_o, no g)
+        "x": [20.0, 5.0, 65.0, 20.0, 5.0],  # 5D (no beta_o)
         "P": [[0.5 if i == j else 0.0 for j in range(5)] for i in range(5)],
         "n_updates": 1000,
         "applicable_modes": ["heating", "idle"],
@@ -1906,10 +1789,9 @@ def test_from_dict_resets_corrupt_5d_legacy():
     assert ekf._x[1] == pytest.approx(ThermalEKF._DEFAULT_ALPHA)
     assert ekf._x[2] == pytest.approx(ThermalEKF._DEFAULT_BETA_H)
     assert ekf._x[5] == pytest.approx(ThermalEKF._DEFAULT_BETA_O)
-    assert ekf._x[6] == pytest.approx(ThermalEKF._DEFAULT_G)
     # Off-diagonals zeroed
-    for i in range(7):
-        for j in range(7):
+    for i in range(6):
+        for j in range(6):
             if i != j:
                 assert ekf._P[i][j] == 0.0
     # Param diagonals at initials, P[0][0] preserved from input
@@ -1980,7 +1862,7 @@ def test_to_dict_writes_current_version():
     ekf = ThermalEKF()
     ekf.update(T_measured=20.0, T_outdoor=10.0, mode="idle", dt_minutes=5.0)
     data = ekf.to_dict()
-    assert data["ekf_version"] == 7
+    assert data["ekf_version"] == 6
 
 
 def test_from_dict_v4_at_bound_preserves_counters_and_modes():
@@ -2186,8 +2068,7 @@ def test_ekf_update_uses_current_mode_for_predict():
     yielding a large negative innovation that drives alpha upward. See #150.
     """
     ekf = ThermalEKF()
-    # Known state: T=21, alpha=0.15, beta_h=3.0, g=0 (no internal gain here so
-    # the idle-vs-heating predict comparison below is unaffected by it).
+    # Known state: T=21, alpha=0.15, beta_h=3.0
     ekf._x = [21.0, 0.15, 3.0, 4.0, 0.5, 0.3, 0.0]
     # Zero covariance so the Kalman update contributes nothing — only the
     # predict step moves _x[0].  This isolates predict_mode selection.
@@ -2241,3 +2122,86 @@ def test_ekf_mode_transition_does_not_inflate_alpha():
     # alpha must be near truth (0.2), not drifted to the upper bound
     assert ekf._x[1] < 1.0, f"alpha drifted far above true value: {ekf._x[1]}"
     assert ekf._x[1] > 0.05, f"alpha collapsed: {ekf._x[1]}"
+
+
+# ---------------------------------------------------------------------------
+# Unexcited parameters get no Kalman gain (cross-covariance leak)
+# ---------------------------------------------------------------------------
+
+
+def _ekf_with_cross_covariance() -> ThermalEKF:
+    """Initialised EKF whose parameters are all correlated with T and alpha,
+    as after a few days of mixed sunny/heating/occupied data."""
+    ekf = ThermalEKF()
+    ekf.update(T_measured=20.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0)
+    ekf._x[1] = 0.02
+    for i in range(2, 6):
+        ekf._P[0][i] = ekf._P[i][0] = 0.05
+        ekf._P[1][i] = ekf._P[i][1] = 0.001
+    return ekf
+
+
+@pytest.mark.parametrize(
+    ("index", "mode", "kwargs"),
+    [
+        (4, "idle", {"q_solar": 0.0}),
+        (2, "idle", {"q_residual": 0.0}),
+        (3, "heating", {}),
+        (5, "idle", {"q_occupancy": 0.0}),
+    ],
+    ids=["beta_s_at_night", "beta_h_plain_idle", "beta_c_while_heating", "beta_o_unoccupied"],
+)
+def test_ekf_unexcited_parameter_ignores_innovation_despite_cross_covariance(index, mode, kwargs):
+    ekf = _ekf_with_cross_covariance()
+    before = ekf._x[index]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode=mode, dt_minutes=3.0, **kwargs)
+    assert ekf._x[index] == before
+
+
+def test_ekf_excited_parameters_still_learn_from_cross_covariance_state():
+    ekf = _ekf_with_cross_covariance()
+    before_h = ekf._x[2]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="heating", dt_minutes=3.0)
+    assert ekf._x[2] != before_h
+
+    ekf = _ekf_with_cross_covariance()
+    before_s = ekf._x[4]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0, q_solar=0.3)
+    assert ekf._x[4] > before_s
+
+
+def test_ekf_beta_s_not_learned_while_heating_in_sun():
+    """Heater mismatch during sunny heating must not end up in beta_s (sim: windowless room 1.0 -> 2.7)."""
+    ekf = _ekf_with_cross_covariance()
+    before, p_before = ekf._x[4], ekf._P[4][4]
+    for _ in range(10):
+        ekf.update(T_measured=21.0, T_outdoor=5.0, mode="heating", dt_minutes=3.0, q_solar=0.05)
+    assert ekf._x[4] == before
+    # No drift noise either: the variance only follows the T/alpha propagation
+    assert ekf._P[4][4] <= p_before
+
+
+def test_ekf_gated_update_keeps_covariance_symmetric_psd():
+    ekf = _ekf_with_cross_covariance()
+    p_beta_s = ekf._P[4][4]
+    ekf.update(T_measured=21.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0)
+    P = ekf._P
+    for i in range(6):
+        assert P[i][i] > 0
+        for j in range(6):
+            assert P[i][j] == pytest.approx(P[j][i])
+    # An unobserved parameter gains no information: its variance stays put
+    assert P[4][4] == pytest.approx(p_beta_s)
+
+
+def test_ekf_update_step_without_predict_uses_full_gain():
+    """_update_step alone (no predict yet) treats every state as observable."""
+    ekf = ThermalEKF()
+    ekf._initialized = True
+    ekf._P[0][4] = ekf._P[4][0] = 0.1
+    before = ekf._x[4]
+    ekf._update_step(ekf._x[0] + 1.0)
+    assert ekf._x[4] > before

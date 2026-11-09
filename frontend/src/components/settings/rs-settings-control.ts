@@ -1,9 +1,9 @@
 /**
  * rs-settings-control – Control settings: mode, comfort weight, thresholds, prediction.
  */
-import { html, css } from "lit";
+import { html, css, nothing } from "lit";
 import { RsSettingsBase } from "./rs-settings-base";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant } from "../../types";
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
@@ -16,6 +16,7 @@ import {
   tempStep,
   tempRange,
 } from "../../utils/temperature";
+import { preheatLeadHours } from "../../utils/constants";
 
 const CONTROL_DOCS_URL =
   "https://github.com/snazzybean/roommind/blob/main/docs/control-and-devices.md";
@@ -31,6 +32,8 @@ export class RsSettingsControl extends RsSettingsBase {
   @property({ type: Boolean }) public predictionEnabled = true;
   @property({ type: Boolean }) public effectivenessWatchdogEnabled = true;
   @property({ type: String }) public scheduleOffAction: "eco" | "off" = "eco";
+  /** Slider position while dragging, so the pre-heat line follows before the value is saved. */
+  @state() private _dragWeight: number | null = null;
 
   render() {
     const l = this.hass.language;
@@ -60,13 +63,21 @@ export class RsSettingsControl extends RsSettingsBase {
             max="100"
             step="5"
             .value=${String(this.comfortWeight)}
+            @input=${(e: Event) => {
+              const v = parseInt((e.target as HTMLInputElement).value, 10);
+              this._dragWeight = isNaN(v) ? null : v;
+            }}
             @change=${(e: Event) => {
               const v = parseInt((e.target as HTMLInputElement).value, 10);
+              this._dragWeight = null;
               if (!isNaN(v) && v !== this.comfortWeight) this._fire("comfortWeight", v);
             }}
           />
           <span class="slider-label">${localize("settings.comfort_weight_comfort", l)}</span>
         </div>
+        ${this.controlMode === "mpc"
+          ? html`<p class="preheat-lead">${this._preheatLeadText(l)}</p>`
+          : nothing}
         <p class="hint helper-text">${localize("settings.comfort_weight_hint", l)}</p>
         <a class="helper-link" href=${CONTROL_DOCS_URL} target="_blank" rel="noreferrer">
           ${localize("common.learn_more", l)}
@@ -186,6 +197,14 @@ export class RsSettingsControl extends RsSettingsBase {
     `;
   }
 
+  private _preheatLeadText(l: string): string {
+    const hours = preheatLeadHours(this._dragWeight ?? this.comfortWeight);
+    if (hours <= 0) return localize("settings.preheat_lead_none", l);
+    return localize("settings.preheat_lead", l, {
+      hours: hours.toLocaleString(l, { maximumFractionDigits: 1 }),
+    });
+  }
+
   private _setControlMode(mode: "mpc" | "bangbang") {
     if (this.controlMode === mode) return;
     this._fire("controlMode", mode);
@@ -201,6 +220,12 @@ export class RsSettingsControl extends RsSettingsBase {
       }
       .helper-text {
         margin: 10px 0 0;
+      }
+      .preheat-lead {
+        margin: 10px 0 0;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--primary-text-color);
       }
       .section-label {
         display: block;

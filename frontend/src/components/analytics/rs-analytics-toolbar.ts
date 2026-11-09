@@ -148,20 +148,18 @@ export class RsAnalyticsToolbar extends LitElement {
               ${localize("analytics.export", l)}
               <ha-icon class="arrow-icon" icon="mdi:chevron-down"></ha-icon>
             </button>
-            ${
-              this._openDropdown === "csv"
-                ? html`<div class="export-dropdown" @click=${(e: Event) => e.stopPropagation()}>
-                    <button @click=${this._exportCsv}>
-                      <ha-icon icon="mdi:download"></ha-icon>
-                      ${localize("analytics.export_download", l)}
-                    </button>
-                    <button @click=${this._copyCsvToClipboard}>
-                      <ha-icon icon="mdi:content-copy"></ha-icon>
-                      ${localize("analytics.export_clipboard", l)}
-                    </button>
-                  </div>`
-                : nothing
-            }
+            ${this._openDropdown === "csv"
+              ? html`<div class="export-dropdown" @click=${(e: Event) => e.stopPropagation()}>
+                  <button @click=${this._exportCsv}>
+                    <ha-icon icon="mdi:download"></ha-icon>
+                    ${localize("analytics.export_download", l)}
+                  </button>
+                  <button @click=${this._copyCsvToClipboard}>
+                    <ha-icon icon="mdi:content-copy"></ha-icon>
+                    ${localize("analytics.export_clipboard", l)}
+                  </button>
+                </div>`
+              : nothing}
           </div>
           <div class="export-split">
             <button
@@ -176,20 +174,18 @@ export class RsAnalyticsToolbar extends LitElement {
               ${localize("analytics.copy_diagnostics", l)}
               <ha-icon class="arrow-icon" icon="mdi:chevron-down"></ha-icon>
             </button>
-            ${
-              this._openDropdown === "diag"
-                ? html`<div class="export-dropdown" @click=${(e: Event) => e.stopPropagation()}>
-                    <button @click=${this._exportDiagnostics}>
-                      <ha-icon icon="mdi:download"></ha-icon>
-                      ${localize("analytics.export_download", l)}
-                    </button>
-                    <button @click=${this._copyDiagnosticsToClipboard}>
-                      <ha-icon icon="mdi:content-copy"></ha-icon>
-                      ${localize("analytics.export_clipboard", l)}
-                    </button>
-                  </div>`
-                : nothing
-            }
+            ${this._openDropdown === "diag"
+              ? html`<div class="export-dropdown" @click=${(e: Event) => e.stopPropagation()}>
+                  <button @click=${this._exportDiagnostics}>
+                    <ha-icon icon="mdi:download"></ha-icon>
+                    ${localize("analytics.export_download", l)}
+                  </button>
+                  <button @click=${this._copyDiagnosticsToClipboard}>
+                    <ha-icon icon="mdi:content-copy"></ha-icon>
+                    ${localize("analytics.export_clipboard", l)}
+                  </button>
+                </div>`
+              : nothing}
           </div>
         </div>
       </div>
@@ -332,6 +328,7 @@ export class RsAnalyticsToolbar extends LitElement {
       }
 
       .range-row {
+        flex-wrap: wrap;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -501,9 +498,6 @@ export class RsAnalyticsToolbar extends LitElement {
       }
 
       @media (max-width: 600px) {
-        .range-row {
-          flex-wrap: wrap;
-        }
         .range-controls {
           flex-wrap: wrap;
         }

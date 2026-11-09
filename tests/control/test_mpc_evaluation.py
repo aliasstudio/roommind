@@ -550,8 +550,12 @@ def test_predict_idle_drift_uses_fallback_outdoor_temp():
 # ---------------------------------------------------------------------------
 
 
-def test_safety_guard_allows_heating_when_prediction_dips(monkeypatch):
-    """Safety guard allows HEATING when idle-drift predicts temp below target."""
+def test_safety_guard_no_drift_preheat_for_fast_systems(monkeypatch):
+    """A fast system at target does not start on a predicted dip; it heats once the dip happens.
+
+    The 1-node model of an AC room learns the air node relaxing into the walls as a
+    steep loss, so the drift bypass restarted the AC right after every stop.
+    """
     hass = build_hass()
     room = make_room()
     mgr = RoomModelManager()
@@ -575,12 +579,36 @@ def test_safety_guard_allows_heating_when_prediction_dips(monkeypatch):
         lambda *a, **kw: fake_plan,
     )
 
-    # current_temp=21.0 >= target=21.0 → guard entry triggers
-    # With outdoor=5, 30-min idle prediction from 21°C dips well below 21 - 0.2
-    # → guard should allow heating
+    # 30-min idle prediction from 21 °C dips below 20.8, but the system is fast
+    assert ctrl._predict_idle_drift(21.0, 30.0) < 20.8
     mode, pf = ctrl._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=25.0))
-    assert mode == MODE_HEATING
-    assert pf > 0.0
+    assert (mode, pf) == (MODE_IDLE, 0.0)
+
+
+def test_safety_guard_fast_system_keeps_heating_within_min_run(monkeypatch):
+    """Past the target a fast system continues only for its min run."""
+    hass = build_hass()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        make_room(),
+        model_manager=mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 60,
+    )
+    fake_plan = MPCPlan(actions=[MODE_HEATING] * 24, temperatures=[21.3] * 25, power_fractions=[1.0] * 24)
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+
+    assert ctrl._evaluate_mpc(21.3, TargetTemps(heat=21.0, cool=25.0)) == (MODE_HEATING, 1.0)
+
+    ctrl.previous_mode = MODE_IDLE
+    assert ctrl._evaluate_mpc(21.3, TargetTemps(heat=21.0, cool=25.0)) == (MODE_IDLE, 0.0)
 
 
 def test_safety_guard_suppresses_when_prediction_stays_warm(monkeypatch):
@@ -638,6 +666,7 @@ def test_safety_guard_adaptive_horizon_underfloor(monkeypatch):
         actions=[MODE_HEATING] * 24,
         temperatures=[21.0] * 25,
         power_fractions=[0.8] * 24,
+        lookahead_blocks=24,  # what the optimizer reports for UFH
     )
     monkeypatch.setattr(
         "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
@@ -650,8 +679,8 @@ def test_safety_guard_adaptive_horizon_underfloor(monkeypatch):
     assert mode == MODE_HEATING
 
 
-def test_safety_guard_allows_cooling_when_prediction_rises(monkeypatch):
-    """Safety guard allows COOLING when idle-drift predicts temp above target."""
+def test_safety_guard_no_drift_precool_for_fast_systems(monkeypatch):
+    """An AC at its cool target does not start on a predicted rise; it cools once the rise happens."""
     hass = build_hass()
     room = make_room(acs=["climate.ac1"], thermostats=[], climate_mode="cool_only")
     mgr = RoomModelManager()
@@ -676,11 +705,10 @@ def test_safety_guard_allows_cooling_when_prediction_rises(monkeypatch):
         lambda *a, **kw: fake_plan,
     )
 
-    # current_temp=24 <= cool_target=24 → guard entry triggers
-    # With outdoor=35 and solar=0.5, prediction rises above 24 + 0.2 → allow cooling
+    # With outdoor=35 and solar=0.5 the prediction rises above 24 + 0.2, but an AC is fast
+    assert ctrl._predict_idle_drift(24.0, 30.0) > 24.2
     mode, pf = ctrl._evaluate_mpc(24.0, TargetTemps(heat=21.0, cool=24.0))
-    assert mode == MODE_COOLING
-    assert pf > 0.0
+    assert (mode, pf) == (MODE_IDLE, 0.0)
 
 
 def test_safety_guard_suppresses_cooling_when_prediction_stays_cool(monkeypatch):
@@ -768,8 +796,7 @@ def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
         settings={},
         has_external_sensor=True,
         previous_mode=MODE_HEATING,
-        heating_system_type="underfloor",
-        mode_on_since=time.time() - 60,  # within 30-min min-run window
+        mode_on_since=time.time() - 60,  # within min-run
     )
     fake_plan = MPCPlan(
         actions=[MODE_HEATING] * 24,
@@ -780,7 +807,7 @@ def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
         "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
-    # 21.5°C < 21°C + 1.0 ceiling → hard ceiling stays silent; min-run keeps heating
+    # 21.5°C >= 21°C → model-based guard entry, min-run keeps heating; ceiling (22) not reached
     mode, pf = ctrl._evaluate_mpc(21.5, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_HEATING
     assert pf > 0.0
@@ -1003,103 +1030,6 @@ def test_mpc_guard_horizon_extended_for_ufh(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Anti-short-cycle: start hysteresis + minimum-off guard
-# ---------------------------------------------------------------------------
-
-
-def _force_cooling(monkeypatch):
-    """Make the optimizer always recommend COOLING so the gate can be tested."""
-    fake_plan = MPCPlan(
-        actions=[MODE_COOLING] * 6,
-        temperatures=[23.0] * 7,
-        power_fractions=[0.8] * 6,
-    )
-    monkeypatch.setattr(
-        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
-        lambda *a, **kw: fake_plan,
-    )
-
-
-def _cool_ctrl(hass, mgr, *, settings=None, previous_mode=MODE_IDLE, off_since=None):
-    return MPCController(
-        hass,
-        make_room(acs=["climate.ac1"], thermostats=[], climate_mode="cool_only"),
-        model_manager=mgr,
-        outdoor_temp=23.0,  # ≈ room temp → no large idle drift → no emergency bypass
-        settings=settings if settings is not None else {},
-        has_external_sensor=True,
-        previous_mode=previous_mode,
-        off_since=off_since,
-    )
-
-
-def test_start_deadband_suppresses_cooling_just_above_target(monkeypatch):
-    """From idle, a tiny excursion (+0.1°) must NOT start cooling."""
-    _force_cooling(monkeypatch)
-    ctrl = _cool_ctrl(build_hass(), RoomModelManager())  # default cw=70 → deadband 0.15
-    mode, pf = ctrl._evaluate_mpc(23.1, TargetTemps(heat=21.0, cool=23.0))
-    assert mode == MODE_IDLE
-    assert pf == 0.0
-
-
-def test_start_deadband_allows_cooling_past_band(monkeypatch):
-    """From idle, an excursion beyond the deadband starts cooling."""
-    _force_cooling(monkeypatch)
-    ctrl = _cool_ctrl(build_hass(), RoomModelManager())
-    mode, pf = ctrl._evaluate_mpc(23.6, TargetTemps(heat=21.0, cool=23.0))
-    assert mode == MODE_COOLING
-    assert pf > 0.0
-
-
-def test_min_off_suppresses_restart_within_window(monkeypatch):
-    """A fresh cooling start is blocked while inside the minimum-off window."""
-    _force_cooling(monkeypatch)
-    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), off_since=time.time() - 60)  # 1 min ago
-    # 23.6 is past the deadband, but min-off still holds it idle (no emergency).
-    mode, pf = ctrl._evaluate_mpc(23.6, TargetTemps(heat=21.0, cool=23.0))
-    assert mode == MODE_IDLE
-    assert pf == 0.0
-
-
-def test_min_off_expires_allows_restart(monkeypatch):
-    """After the minimum-off window elapses, cooling may restart."""
-    _force_cooling(monkeypatch)
-    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), off_since=time.time() - 11 * 60)  # past 10 min
-    mode, pf = ctrl._evaluate_mpc(23.6, TargetTemps(heat=21.0, cool=23.0))
-    assert mode == MODE_COOLING
-    assert pf > 0.0
-
-
-def test_emergency_overshoot_bypasses_min_off(monkeypatch):
-    """A large excursion (>= hard ceiling) cools immediately despite min-off."""
-    _force_cooling(monkeypatch)
-    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), off_since=time.time() - 60)
-    # 24.0 is target + 1.0°C (HARD_OVERSHOOT_CEILING) → emergency bypass.
-    mode, pf = ctrl._evaluate_mpc(24.0, TargetTemps(heat=21.0, cool=23.0))
-    assert mode == MODE_COOLING
-    assert pf > 0.0
-
-
-def test_ongoing_cooling_run_not_gated(monkeypatch):
-    """The start gate only fires from idle — an ongoing run is untouched."""
-    _force_cooling(monkeypatch)
-    ctrl = _cool_ctrl(build_hass(), RoomModelManager(), previous_mode=MODE_COOLING)
-    # Within the deadband and within a (hypothetical) min-off, but already cooling.
-    mode, pf = ctrl._evaluate_mpc(23.1, TargetTemps(heat=21.0, cool=23.0))
-    assert mode == MODE_COOLING
-    assert pf > 0.0
-
-
-def test_start_deadband_scales_with_comfort_weight():
-    """Deadband is tight at the comfort end and wide at the efficiency end."""
-    hass = build_hass()
-    mgr = RoomModelManager()
-    assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 70})._start_deadband == pytest.approx(0.15)
-    assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 40})._start_deadband == pytest.approx(0.493, abs=0.01)
-    assert _cool_ctrl(hass, mgr, settings={"comfort_weight": 0})._start_deadband == pytest.approx(0.95)
-
-
-# ---------------------------------------------------------------------------
 # Absent-target filling — a cool_only override must survive the optimizer's
 # "cool >= heat" clamp (regression: overrides were silently discarded)
 # ---------------------------------------------------------------------------
@@ -1122,7 +1052,7 @@ def test_cool_only_override_reaches_the_optimizer(monkeypatch):
         settings={"comfort_weight": 40},
         has_external_sensor=True,
         previous_mode=MODE_IDLE,
-        off_since=time.time() - 40 * 60,
+        idle_since=time.time() - 40 * 60,
         target_resolver=lambda ts: TargetTemps(heat=None, cool=20.0),
     )
 
@@ -1267,3 +1197,62 @@ def test_simulate_plan_replays_directed_actions():
     heated = optimizer.simulate_plan(heat_plan, 18.0, [10.0] * 4, 5)
     idled = optimizer.simulate_plan(idle_plan, 18.0, [10.0] * 4, 5)
     assert heated[-1] > idled[-1]
+
+
+# --- an unknown outdoor temperature must not gate cooling ----------------------
+
+
+def _cool_only_ctrl(hass, outdoor_temp, outdoor_forecast=None):
+    room = make_room(thermostats=[], acs=["climate.ac"], climate_mode="cool_only")
+    model_mgr = RoomModelManager()
+    model_mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0))
+    model_mgr.get_prediction_std = MagicMock(return_value=0.1)
+    model_mgr.get_mode_counts = MagicMock(return_value=(100, 0, 40))
+    return MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=outdoor_temp,
+        outdoor_forecast=outdoor_forecast,
+        settings={},
+        has_external_sensor=True,
+    )
+
+
+def _ac_hass():
+    hass = build_hass()
+    ac = MagicMock()
+    ac.state = "cool"
+    ac.attributes = {"hvac_modes": ["cool", "off"], "temperature": 22.0, "min_temp": 16.0, "max_temp": 30.0}
+    hass.states.get = MagicMock(return_value=ac)
+    return hass
+
+
+@pytest.mark.asyncio
+async def test_unknown_outdoor_temp_does_not_gate_cooling():
+    """No outdoor reading and no forecast: the 10 °C placeholder must not block cooling.
+
+    The deviation is large so the verdict isolates the gate: with the cold placeholder
+    the model predicts a drift down, and for a small deviation waiting for it is a plan.
+    """
+    ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=None)
+    mode, pf = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
+    assert mode == MODE_COOLING
+    assert pf > 0.0
+
+
+@pytest.mark.asyncio
+async def test_known_cold_outdoor_temp_still_gates_cooling():
+    """A real reading below the cooling minimum still blocks cooling."""
+    ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=10.0)
+    mode, _ = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
+    assert mode == MODE_IDLE
+
+
+@pytest.mark.asyncio
+async def test_cold_forecast_still_gates_cooling_without_a_reading():
+    """A forecast is a real estimate: without a current reading it still gates."""
+    forecast = [{"temperature": 10.0}] * 24
+    ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=None, outdoor_forecast=forecast)
+    mode, _ = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
+    assert mode == MODE_IDLE

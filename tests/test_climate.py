@@ -7,10 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.climate import ClimateEntityFeature, HVACMode
+from homeassistant.const import UnitOfTemperature
 
 from custom_components.roommind.climate import (
     OVERRIDE_TURN_ON_REFRESH_DELAY_S,
     RoomMindOverrideClimate,
+    RoomMindRoomClimate,
     _create_room_climates,
     async_setup_entry,
 )
@@ -59,11 +61,10 @@ def _active_auto_room(**overrides):
 
 
 def test_create_room_climates(mock_coordinator):
-    """Factory creates exactly one climate entity per room."""
+    """Factory creates the deprecated override entity next to the room climate entity (#238)."""
     coordinator, _ = mock_coordinator
     climates = _create_room_climates(coordinator, "living_room")
-    assert len(climates) == 1
-    assert isinstance(climates[0], RoomMindOverrideClimate)
+    assert [type(c) for c in climates] == [RoomMindOverrideClimate, RoomMindRoomClimate]
 
 
 def test_unique_id_and_entity_id(mock_coordinator):
@@ -127,6 +128,31 @@ def test_hvac_mode_cool_when_cool_only(mock_coordinator):
     assert entity.hvac_mode == HVACMode.COOL
 
 
+@pytest.mark.parametrize("entity_class", [RoomMindOverrideClimate, RoomMindRoomClimate])
+@pytest.mark.parametrize(
+    "name",
+    ["current_temperature", "target_temperature", "target_temperature_low", "target_temperature_high"],
+)
+def test_temperatures_are_served_under_both_names(entity_class, name):
+    """HA 2026.11 reads native_*, older releases the old names; both must be the same property."""
+    assert getattr(entity_class, name) is getattr(entity_class, f"native_{name}")
+
+
+@pytest.mark.parametrize("entity_class", [RoomMindOverrideClimate, RoomMindRoomClimate])
+def test_temperature_unit_is_celsius_under_both_names(entity_class, mock_coordinator):
+    entity = entity_class(mock_coordinator[0], "living_room")
+    assert entity._attr_native_temperature_unit == UnitOfTemperature.CELSIUS
+    assert entity.temperature_unit == UnitOfTemperature.CELSIUS
+
+
+def test_override_entity_native_range(mock_coordinator):
+    coordinator, store = mock_coordinator
+    store.get_room.return_value = _active_auto_room()
+    entity = RoomMindOverrideClimate(coordinator, "living_room")
+    assert entity.native_target_temperature_low == 21.0
+    assert entity.native_target_temperature_high == 24.0
+
+
 def test_override_entity_auto_reports_range(mock_coordinator):
     """Auto mode exposes HEAT_COOL with range support and low/high targets."""
     coordinator, store = mock_coordinator
@@ -134,9 +160,18 @@ def test_override_entity_auto_reports_range(mock_coordinator):
     entity = RoomMindOverrideClimate(coordinator, "living_room")
     assert HVACMode.HEAT_COOL in entity.hvac_modes
     assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-    assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
     assert entity.target_temperature_low == 21.0
     assert entity.target_temperature_high == 24.0
+
+
+def test_override_entity_auto_accepts_single_temperature(mock_coordinator):
+    """Auto mode also accepts a bare temperature, HA rejects it without the feature (#471)."""
+    coordinator, store = mock_coordinator
+    store.get_room.return_value = _active_auto_room()
+    entity = RoomMindOverrideClimate(coordinator, "living_room")
+    assert entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+    # None keeps the dual slider in the thermostat card
+    assert entity.target_temperature is None
 
 
 def test_override_entity_heat_only_single_target(mock_coordinator):
@@ -448,8 +483,8 @@ async def test_async_setup_entry_creates_entities_for_all_rooms():
     assert coordinator.async_add_climate_entities is async_add_entities
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 2
-    assert all(isinstance(e, RoomMindOverrideClimate) for e in entities)
+    assert sum(isinstance(e, RoomMindOverrideClimate) for e in entities) == 2
+    assert sum(isinstance(e, RoomMindRoomClimate) for e in entities) == 2
     assert "living_room" in coordinator._climate_entity_areas
     assert "bedroom" in coordinator._climate_entity_areas
 

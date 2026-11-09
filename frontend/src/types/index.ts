@@ -86,8 +86,10 @@ export interface RoomLiveData {
   confidence: number | null;
   mpc_active: boolean;
   presence_away: boolean;
+  occupancy_vacant?: boolean;
   mold_risk_level: "ok" | "warning" | "critical";
   mold_surface_rh: number | null;
+  mold_surface_temp: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
   dehumidifying: boolean;
@@ -95,11 +97,13 @@ export interface RoomLiveData {
   cover_auto_paused: boolean;
   cover_override_until?: number | null;
   cover_forced_reason: string;
+  cover_reason?: string;
   active_cover_schedule_index: number;
   active_heat_sources: string | null;
   learning_paused_reason: "outdoor_unavailable" | null;
   compressor_protection_active: boolean;
   compressor_protection_reason: "min_off" | "min_run" | null;
+  compressor_protection_until: number | null;
   coil_dry_active: boolean;
   coil_dry_phase: "drain" | "blow" | null;
   coil_dry_until: number | null;
@@ -129,26 +133,33 @@ export interface DeviceConfig {
   fan_control?: "off" | "fixed" | "auto"; // active fan strategy; default "off"
   fan_min_mode?: string; // auto: weakest allowed ladder speed ("" = ladder min)
   fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
-  setpoint_mode?: "proportional" | "direct" | "valve"; // default "proportional"; "valve" is TRV-only
   cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
   dehumidify_target?: number | null; // ac: dry-mode setpoint override (null = room's scheduled cool target)
-  valve_opening_entity?: string; // trv: number.* valve opening degree; set = direct valve regulation
-  valve_closing_entity?: string; // trv: number.* valve closing degree (mirrored, optional)
-  valve_min_opening?: number; // trv: lowest opening degree that still passes water (default 10)
-  valve_max_opening?: number; // trv: head's usable maximum opening degree (default 100)
-  valve_opening_threshold?: number; // trv: demand % below which the valve is shut (default 5)
-  valve_deadband?: number; // trv: smallest opening change worth sending (default 5)
+  setback_auto_off?: boolean; // setback ends in off after an hour without demand, default off (#255)
+  setpoint_mode?: "proportional" | "direct"; // default "proportional"
   setpoint_offset?: number; // °C added to the room target in direct mode, default 0
   coil_dry?: "inherit" | "on" | "off"; // default "inherit"
   coil_dry_minutes?: number; // 0 = inherit global
   coil_dry_mode?: "" | "fan_only" | "dry"; // "" = inherit global
   coil_dry_fan_mode?: string; // "" = inherit global, "__keep__" = keep current
+  valve_opening_entity?: string; // number entity for direct valve opening degree (0-100%)
+  valve_closing_entity?: string; // number entity for direct valve closing degree (0-100%)
+  valve_closing_mode?: "closing_degree" | "idle_opening"; // idle_opening: the second entity is the opening while idle (SONOFF TRV-ZBT)
 }
 
 export type HeatSourcePrimary = "trv" | "ac";
 
 export type ConflictResolution =
-  "heating_priority" | "cooling_priority" | "majority" | "outdoor_temp";
+  | "heating_priority"
+  | "cooling_priority"
+  | "majority"
+  | "outdoor_temp";
+
+/** A stored room whose Home Assistant area was deleted; it rests until the area is back (#494). */
+export interface RoomWithoutArea {
+  area_id: string;
+  display_name: string;
+}
 
 export interface CompressorGroup {
   id: string;
@@ -170,6 +181,10 @@ export interface RoomConfig {
   temperature_sensor: string;
   humidity_sensor: string;
   occupancy_sensors?: string[];
+  occupancy_eco_enabled?: boolean;
+  occupancy_eco_delay?: number;
+  preheat_enabled?: boolean;
+  follow_device_setpoint?: boolean;
   window_sensors: string[];
   window_open_delay: number;
   window_close_delay: number;
@@ -203,6 +218,7 @@ export interface RoomConfig {
   covers_night_close_elevation?: number;
   covers_night_close_offset_minutes?: number;
   covers_snap_deploy?: boolean;
+  covers_window_hold?: boolean;
   cover_min_positions?: Record<string, number>;
   ignore_presence?: boolean;
   is_outdoor?: boolean;
@@ -250,6 +266,7 @@ export interface GlobalSettings {
   coil_dry_drain_minutes?: number;
   mold_detection_enabled?: boolean;
   mold_humidity_threshold?: number;
+  mold_f_rsi?: number;
   mold_sustained_minutes?: number;
   mold_notification_cooldown?: number;
   mold_notifications_enabled?: boolean;
@@ -336,10 +353,42 @@ export interface AnalyticsDataPoint {
   fan_mode?: string | null;
 }
 
+export interface AnalyticsStats {
+  hours: number;
+  heating_hours: number;
+  cooling_hours: number;
+  window_hours: number;
+  heating_starts: number;
+  cooling_starts: number;
+  comfort: {
+    below_pct: number;
+    within_pct: number;
+    above_pct: number;
+    mean_deviation: number;
+  } | null;
+}
+
+export interface RhythmDay {
+  date: string;
+  heat: Array<number | null>;
+  cool: Array<number | null>;
+  window: Array<number | null>;
+  deviation: Array<number | null>;
+  temp: Array<number | null>;
+  humidity: Array<number | null>;
+  outdoor: Array<number | null>;
+}
+
+export interface AnalyticsRhythm {
+  days: RhythmDay[];
+}
+
 export interface AnalyticsData {
   detail: AnalyticsDataPoint[];
   history: AnalyticsDataPoint[];
   forecast?: AnalyticsDataPoint[];
+  stats?: AnalyticsStats;
+  rhythm?: AnalyticsRhythm | null;
   model: {
     confidence: number;
     model: {
@@ -349,7 +398,7 @@ export interface AnalyticsData {
       Q_cool: number;
       Q_solar: number;
       Q_occupancy: number;
-      Q_internal: number;
+      Q_fast?: number;
     };
     n_samples: number;
     n_observations: number;
@@ -361,6 +410,8 @@ export interface AnalyticsData {
     prediction_std_idle: number;
     prediction_std_heating: number;
     has_occupancy_sensors: boolean;
+    solar_gain_now?: number;
+    solar_gain_today_max?: number;
   };
   dehumidify?: {
     enabled: boolean;

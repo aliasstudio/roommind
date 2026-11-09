@@ -27,6 +27,8 @@ DETAIL_FIELDS = [
     "device_setpoint",
     "occupancy",
     "fan_mode",
+    "heat_target",
+    "cool_target",
 ]
 DETAIL_MAX_AGE = 48 * 3600  # 48 hours
 HISTORY_MAX_AGE = 90 * 24 * 3600  # 90 days
@@ -96,6 +98,8 @@ class HistoryStore:
                     "device_setpoint": data.get("device_setpoint", ""),
                     "occupancy": data.get("occupancy", ""),
                     "fan_mode": data.get("fan_mode", ""),
+                    "heat_target": data.get("heat_target", ""),
+                    "cool_target": data.get("cool_target", ""),
                 }
             )
 
@@ -222,6 +226,9 @@ class HistoryStore:
                 "heating_power",
                 "solar_irradiance",
                 "blind_position",
+                "humidity",
+                "heat_target",
+                "cool_target",
             ):
                 vals = []
                 for r in bucket:
@@ -246,6 +253,7 @@ class HistoryStore:
     def _append_history(self, area_id: str, rows: list[dict]) -> None:
         self._ensure_dir()
         path = self._history_path(area_id)
+        self._migrate_header(path)
         file_exists = os.path.isfile(path)
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
@@ -256,6 +264,6 @@ class HistoryStore:
     def _rewrite_csv(self, path: str, rows: list[dict]) -> None:
         self._ensure_dir()
         with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
+            writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(rows)
