@@ -54,6 +54,7 @@ export class RsSettings extends LitElement {
   @state() private _outdoorUnavailableNotify = true;
   @state() private _predictionEnabled = true;
   @state() private _effectivenessWatchdogEnabled = true;
+  @state() private _effectivenessWatchdogExcludedRooms: string[] = [];
   @state() private _heatingSeason = true;
   @state() private _vacationActive = false;
   @state() private _vacationTemp = 15;
@@ -123,6 +124,7 @@ export class RsSettings extends LitElement {
       this._outdoorUnavailableNotify = s.outdoor_unavailable_notify ?? true;
       this._predictionEnabled = s.prediction_enabled ?? true;
       this._effectivenessWatchdogEnabled = s.effectiveness_watchdog_enabled ?? true;
+      this._effectivenessWatchdogExcludedRooms = s.effectiveness_watchdog_excluded_rooms ?? [];
       this._heatingSeason = s.heating_season ?? true;
       const vUntil = s.vacation_until;
       this._vacationActive = !!(vUntil && vUntil > Date.now() / 1000);
@@ -249,6 +251,8 @@ export class RsSettings extends LitElement {
           .outdoorHeatingMax=${this._outdoorHeatingMax}
           .predictionEnabled=${this._predictionEnabled}
           .effectivenessWatchdogEnabled=${this._effectivenessWatchdogEnabled}
+          .effectivenessWatchdogExcludedRooms=${this._effectivenessWatchdogExcludedRooms}
+          .rooms=${this.rooms}
           .scheduleOffAction=${this._scheduleOffAction}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-control>
@@ -463,6 +467,7 @@ export class RsSettings extends LitElement {
         outdoor_unavailable_notify: this._outdoorUnavailableNotify,
         prediction_enabled: this._predictionEnabled,
         effectiveness_watchdog_enabled: this._effectivenessWatchdogEnabled,
+        effectiveness_watchdog_excluded_rooms: this._effectivenessWatchdogExcludedRooms,
         heating_season: this._heatingSeason,
         vacation_temp: this._vacationTemp,
         vacation_until: this._vacationActive

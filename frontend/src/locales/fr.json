@@ -409,6 +409,8 @@
   "settings.prediction_enabled_hint": "Afficher la tendance de température prédite dans les graphiques d'analyse. A désactiver si vous constatez de mauvaises performances.",
   "settings.effectiveness_watchdog": "Surveiller les appareils sans effet",
   "settings.effectiveness_watchdog_hint": "Notifier lorsqu'une pièce chauffe ou refroidit à pleine puissance pendant 20 minutes sans que la température bouge. RoomMind éteint puis rallume d'abord les climatiseurs — un appareil peut signaler le bon mode alors que son compresseur ne démarre jamais — et envoie une notification si cela ne suffit pas.",
+  "settings.effectiveness_watchdog_room_excluded": "pièce non surveillée",
+  "settings.effectiveness_watchdog_rooms_excluded": "pièces non surveillées",
   "vacation.title": "Mode vacances",
   "vacation.hint": "Règle toutes les pièces sur une température réduite jusqu'à la date de fin.",
   "vacation.active_label": "Mode vacances actif",

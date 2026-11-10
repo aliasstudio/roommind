@@ -4,7 +4,7 @@
 import { html, css, nothing } from "lit";
 import { RsSettingsBase } from "./rs-settings-base";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant } from "../../types";
+import type { HomeAssistant, RoomConfig } from "../../types";
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
 import {
@@ -31,9 +31,12 @@ export class RsSettingsControl extends RsSettingsBase {
   @property({ type: Number }) public outdoorHeatingMax = 22;
   @property({ type: Boolean }) public predictionEnabled = true;
   @property({ type: Boolean }) public effectivenessWatchdogEnabled = true;
+  @property({ type: Array }) public effectivenessWatchdogExcludedRooms: string[] = [];
+  @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
   @property({ type: String }) public scheduleOffAction: "eco" | "off" = "eco";
   /** Slider position while dragging, so the pre-heat line follows before the value is saved. */
   @state() private _dragWeight: number | null = null;
+  @state() private _showWatchdogExceptions = false;
 
   render() {
     const l = this.hass.language;
@@ -173,6 +176,7 @@ export class RsSettingsControl extends RsSettingsBase {
               this._fire("effectivenessWatchdogEnabled", (e.target as HTMLInputElement).checked)}
           ></ha-switch>
         </div>
+        ${this.effectivenessWatchdogEnabled ? this._renderWatchdogExceptions() : nothing}
       </div>
 
       <div class="settings-section">
@@ -203,6 +207,59 @@ export class RsSettingsControl extends RsSettingsBase {
     return localize("settings.preheat_lead", l, {
       hours: hours.toLocaleString(l, { maximumFractionDigits: 1 }),
     });
+  }
+
+  private _renderWatchdogExceptions() {
+    const l = this.hass.language;
+    const configuredRooms = Object.keys(this.rooms)
+      .map((areaId) => ({ areaId, name: this.hass.areas?.[areaId]?.name ?? areaId }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (configuredRooms.length === 0) return nothing;
+    const excludedCount = configuredRooms.filter((room) =>
+      this.effectivenessWatchdogExcludedRooms.includes(room.areaId),
+    ).length;
+
+    return html`
+      <button
+        class="exceptions-link"
+        @click=${() => {
+          this._showWatchdogExceptions = !this._showWatchdogExceptions;
+        }}
+      >
+        <span
+          >${excludedCount > 0
+            ? `${excludedCount} ${localize(excludedCount === 1 ? "settings.effectiveness_watchdog_room_excluded" : "settings.effectiveness_watchdog_rooms_excluded", l)}`
+            : localize("settings.learning_exceptions", l)}</span
+        >
+        <ha-icon
+          icon=${this._showWatchdogExceptions ? "mdi:chevron-up" : "mdi:chevron-down"}
+          style="--mdc-icon-size: 16px"
+        ></ha-icon>
+      </button>
+      ${this._showWatchdogExceptions
+        ? html`
+            <div class="room-toggles">
+              ${configuredRooms.map(
+                (room) => html`
+                  <div class="room-toggle-row">
+                    <span class="room-toggle-name">${room.name}</span>
+                    <ha-switch
+                      .checked=${!this.effectivenessWatchdogExcludedRooms.includes(room.areaId)}
+                      @change=${(e: Event) => {
+                        const isWatched = (e.target as HTMLInputElement).checked;
+                        const excluded = new Set(this.effectivenessWatchdogExcludedRooms);
+                        if (isWatched) excluded.delete(room.areaId);
+                        else excluded.add(room.areaId);
+                        this._fire("effectivenessWatchdogExcludedRooms", [...excluded]);
+                      }}
+                    ></ha-switch>
+                  </div>
+                `,
+              )}
+            </div>
+          `
+        : nothing}
+    `;
   }
 
   private _setControlMode(mode: "mpc" | "bangbang") {
