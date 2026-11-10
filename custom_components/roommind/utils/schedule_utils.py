@@ -26,7 +26,7 @@ from ..const import (
     TargetTemps,
     is_override_active,
 )
-from .device_utils import DEVICE_TYPE_AC, DEVICE_TYPE_TRV
+from .device_utils import DEVICE_TYPE_AC, DEVICE_TYPE_TRV, SWING_MODE_KEYS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -387,16 +387,20 @@ def resolve_schedule_fan(schedule_blocks: dict | None, ts: float) -> dict[str, s
     Returns only the keys that are present, or None when none are, so the
     per-device fan configuration is otherwise used unchanged.
     """
-    if schedule_blocks is None:
-        return None
-    data = find_active_block(schedule_blocks, ts)
+    return _resolve_block_overrides(schedule_blocks, ts, ("fan_control", "fan_min_mode", "fan_max_mode"))
+
+
+def resolve_schedule_swing(schedule_blocks: dict | None, ts: float) -> dict[str, str] | None:
+    """Return the louver positions (``heat_swing_mode``, ``cool_swing_mode``) the active block sets, or None."""
+    return _resolve_block_overrides(schedule_blocks, ts, SWING_MODE_KEYS)
+
+
+def _resolve_block_overrides(schedule_blocks: dict | None, ts: float, keys: tuple[str, ...]) -> dict[str, str] | None:
+    """Return the non-empty values of ``keys`` in the active block's data, or None when it sets none."""
+    data = find_active_block(schedule_blocks, ts) if schedule_blocks is not None else None
     if not data:
         return None
-    override: dict[str, str] = {}
-    for key in ("fan_control", "fan_min_mode", "fan_max_mode"):
-        val = data.get(key)
-        if val:
-            override[key] = str(val)
+    override = {key: str(data[key]) for key in keys if data.get(key)}
     return override or None
 
 

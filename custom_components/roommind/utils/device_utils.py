@@ -201,6 +201,11 @@ def scale_cool_floor_by_airflow(
     return device_min + (1.0 - airflow) * (floor - device_min)
 
 
+# Louver position keys, per hvac state an AC reports while it runs that way.
+SWING_MODE_KEY_BY_STATE = {"heat": "heat_swing_mode", "cool": "cool_swing_mode"}
+SWING_MODE_KEYS = tuple(SWING_MODE_KEY_BY_STATE.values())
+
+
 def get_fan_control(devices: list[dict], entity_id: str) -> tuple[str, str, str]:
     """Return (fan_control, fan_min_mode, fan_max_mode) for a device.
 

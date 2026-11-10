@@ -1430,7 +1430,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if not seed_pending:
                 self._mode_seeded.add(area_id)
             # --- Auto fan-speed escalation (per AC device, opt-in) ---
-            from .utils.schedule_utils import resolve_schedule_fan
+            from .utils.schedule_utils import resolve_schedule_fan, resolve_schedule_swing
 
             schedule_fan = resolve_schedule_fan(schedule_blocks, time.time())
             fan_overrides = self._resolve_fan_overrides(
@@ -1494,6 +1494,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         force_off=force_off,
                         fan_overrides=fan_overrides or None,
                         ac_cool_floors=ac_cool_floors or None,
+                    )
+                    await controller.async_apply_swing_modes(
+                        resolve_schedule_swing(schedule_blocks, time.time()),
+                        cycling_eids | coil_dry.controlled_eids,
                     )
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning(
