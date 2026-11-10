@@ -90,6 +90,8 @@ _BLOCK_DATA_SCHEMA = vol.Schema(
         vol.Optional("fan_control"): str,
         vol.Optional("fan_min_mode"): str,
         vol.Optional("fan_max_mode"): str,
+        vol.Optional("heat_swing_mode"): str,
+        vol.Optional("cool_swing_mode"): str,
         vol.Optional("dehumidify"): bool,
     }
 )
@@ -509,6 +511,8 @@ async def websocket_list_rooms(
                     vol.Optional("fan_control", default="off"): vol.In(["off", "fixed", "auto"]),
                     vol.Optional("fan_min_mode", default=""): str,
                     vol.Optional("fan_max_mode", default=""): str,
+                    vol.Optional("heat_swing_mode", default=""): str,
+                    vol.Optional("cool_swing_mode", default=""): str,
                     vol.Optional("setpoint_mode", default="proportional"): vol.In(SETPOINT_MODES),
                     vol.Optional("cool_setpoint_floor", default=None): vol.Any(None, "", vol.Coerce(float)),
                     vol.Optional("dehumidify_target", default=None): vol.Any(None, "", vol.Coerce(float)),

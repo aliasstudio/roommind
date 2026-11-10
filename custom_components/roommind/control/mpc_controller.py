@@ -54,11 +54,13 @@ from ..utils.device_utils import (
     IDLE_ACTION_LOW,
     IDLE_ACTION_OFF,
     IDLE_ACTION_SETBACK,
+    SWING_MODE_KEY_BY_STATE,
     ValveEntities,
     apply_idle_override,
     get_ac_eids,
     get_active_fan_mode,
     get_all_entity_ids,
+    get_device_by_eid,
     get_direct_setpoint_eids,
     get_idle_action,
     get_setback_auto_off,
@@ -3025,6 +3027,27 @@ class MPCController:
         if state and state.attributes.get("fan_mode") == fan_mode:
             return
         await self._call("set_fan_mode", {"entity_id": eid, "fan_mode": fan_mode})
+
+    async def async_apply_swing_modes(self, schedule_swing: dict[str, str] | None, exclude_eids: set[str]) -> None:
+        """Hold each running AC's louver at the position set for its direction.
+
+        Some units reset the louver whenever they are switched on or their fan
+        changes, so the position is checked every cycle. The schedule block wins
+        over the device setting. A unit that is off is left alone, a louver
+        command could switch it on.
+        """
+        for eid in self.acs:
+            state = self.hass.states.get(eid)
+            key = SWING_MODE_KEY_BY_STATE.get(state.state) if state is not None else None
+            if key is None or eid in exclude_eids:
+                continue
+            swing_mode = (schedule_swing or {}).get(key) or (get_device_by_eid(self._devices, eid) or {}).get(key)
+            if not swing_mode or state.attributes.get("swing_mode") == swing_mode:
+                continue
+            if swing_mode not in (state.attributes.get("swing_modes") or []):
+                _LOGGER.debug("Area '%s': '%s' has no swing mode '%s'", self._area_id, eid, swing_mode)
+                continue
+            await self._call("set_swing_mode", {"entity_id": eid, "swing_mode": swing_mode})
 
     async def _call(self, service: str, data: dict, *, temp_intent: str = "", deadband: float | None = None) -> str:
         """Send a climate service call unless the device already holds the value.

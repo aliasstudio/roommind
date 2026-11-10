@@ -26,6 +26,7 @@ from custom_components.roommind.utils.schedule_utils import (
     resolve_schedule_fan,
     resolve_schedule_idle,
     resolve_schedule_index,
+    resolve_schedule_swing,
     resolve_target_at_time,
     set_band_sides,
 )
@@ -123,6 +124,25 @@ _FAN_BLOCKS = {
 
 def test_resolve_schedule_fan_none_blocks():
     assert resolve_schedule_fan(None, _MON_DAY) is None
+
+
+def test_resolve_schedule_fan_reads_the_active_block():
+    assert resolve_schedule_fan(_FAN_BLOCKS, _MON_NIGHT) == {"fan_max_mode": "Low"}
+    assert resolve_schedule_fan(_FAN_BLOCKS, _MON_DAY) is None
+
+
+_SWING_BLOCKS = {
+    "monday": [
+        {"from": "00:00:00", "to": "09:00:00", "data": {"heat_swing_mode": "Lower fix", "cool_swing_mode": ""}},
+        {"from": "09:00:00", "to": "23:59:59", "data": {"temperature": 22}},
+    ]
+}
+
+
+def test_resolve_schedule_swing_keeps_only_set_positions():
+    assert resolve_schedule_swing(_SWING_BLOCKS, _MON_NIGHT) == {"heat_swing_mode": "Lower fix"}
+    assert resolve_schedule_swing(_SWING_BLOCKS, _MON_DAY) is None
+    assert resolve_schedule_swing(None, _MON_DAY) is None
 
 
 # ---------------------------------------------------------------------------
