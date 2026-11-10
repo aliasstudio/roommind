@@ -719,5 +719,11 @@
   "roomcard.editor.hide_climate_control": "Masquer l'interrupteur du contrôle climatique",
   "roomcard.editor.hide_temperatures": "Masquer les températures confort et éco",
   "roomcard.paused": "en pause",
-  "roomcard.editor.compact": "Affichage compact"
+  "roomcard.editor.compact": "Affichage compact",
+  "devices.heat_swing_mode": "Volet en chauffage",
+  "devices.cool_swing_mode": "Volet en refroidissement",
+  "devices.swing_mode_keep": "Laisser à l'appareil",
+  "devices.swing_mode_hint": "RoomMind place le volet vertical ici dès que l'appareil chauffe ou refroidit, et l'y remet si l'appareil le réinitialise. Un bloc de planning peut fixer sa propre position.",
+  "schedule.editor_heat_swing_mode": "Volet en chauffage",
+  "schedule.editor_cool_swing_mode": "Volet en refroidissement"
 }

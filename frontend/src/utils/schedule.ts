@@ -71,6 +71,8 @@ const TYPE_ONLY_KEYS = {
     "fan_control",
     "fan_min_mode",
     "fan_max_mode",
+    "heat_swing_mode",
+    "cool_swing_mode",
     "dehumidify",
   ],
   trv: ["trv_idle_action"],

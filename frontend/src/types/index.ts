@@ -43,6 +43,8 @@ export interface ScheduleBlockData {
   fan_control?: string;
   fan_min_mode?: string;
   fan_max_mode?: string;
+  heat_swing_mode?: string;
+  cool_swing_mode?: string;
   dehumidify?: boolean;
 }
 
@@ -133,6 +135,8 @@ export interface DeviceConfig {
   fan_control?: "off" | "fixed" | "auto"; // active fan strategy; default "off"
   fan_min_mode?: string; // auto: weakest allowed ladder speed ("" = ladder min)
   fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
+  heat_swing_mode?: string; // ac: louver while heating ("" = leave to the unit)
+  cool_swing_mode?: string; // ac: louver while cooling ("" = leave to the unit)
   cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
   dehumidify_target?: number | null; // ac: dry-mode setpoint override (null = room's scheduled cool target)
   setback_auto_off?: boolean; // setback ends in off after an hour without demand, default off (#255)

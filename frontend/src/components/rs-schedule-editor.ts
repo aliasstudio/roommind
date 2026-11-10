@@ -22,6 +22,7 @@ import {
   trimTime,
 } from "../utils/schedule";
 import { toCelsius, toDisplay, tempStep, tempUnit, tempRange } from "../utils/temperature";
+import { SWING_MODE_KEYS } from "../utils/device-utils";
 import { inputStyles } from "../styles/input-styles";
 
 /** What each device type can actually do while idle. */
@@ -199,6 +200,14 @@ export class RsScheduleEditor extends LitElement {
   private get _fanModes(): string[] {
     const modes = this.devices.flatMap(
       (device) => (this.hass?.states?.[device.entity_id]?.attributes?.fan_modes ?? []) as string[],
+    );
+    return [...new Set(modes)];
+  }
+
+  private get _swingModes(): string[] {
+    const modes = this.devices.flatMap(
+      (device) =>
+        (this.hass?.states?.[device.entity_id]?.attributes?.swing_modes ?? []) as string[],
     );
     return [...new Set(modes)];
   }
@@ -402,6 +411,16 @@ export class RsScheduleEditor extends LitElement {
           (value) => this._patchData(day, index, { [field]: value }),
         ),
       )}
+      ${this._swingModes.length > 0
+        ? SWING_MODE_KEYS.map((field) =>
+            this._renderChoiceField(
+              localize(`schedule.editor_${field}`, language),
+              data[field],
+              this._swingModes.map((mode) => ({ value: mode, label: mode })),
+              (value) => this._patchData(day, index, { [field]: value }),
+            ),
+          )
+        : nothing}
       <div class="field switch-field">
         <ha-switch
           .checked=${data.dehumidify !== false}
