@@ -50,6 +50,40 @@ export class RsSettingsBase extends LitElement {
       padding-top: 0;
     }
 
+    .exceptions-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: none;
+      border: none;
+      padding: 8px 0 0;
+      margin: 0;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--primary-color);
+      font-family: inherit;
+    }
+    .exceptions-link:hover {
+      text-decoration: underline;
+    }
+
+    .room-toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 12px;
+    }
+    .room-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+    .room-toggle-name {
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+
     .toggle-row {
       display: flex;
       justify-content: space-between;

@@ -712,8 +712,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         beyond RoomMind's reach — the hardware is faulty, or the integration is
         accepting commands the device never receives — and gets a notification.
         """
-        if not settings.get("effectiveness_watchdog_enabled", DEFAULT_EFFECTIVENESS_WATCHDOG):
+        is_watched = settings.get(
+            "effectiveness_watchdog_enabled", DEFAULT_EFFECTIVENESS_WATCHDOG
+        ) and area_id not in settings.get("effectiveness_watchdog_excluded_rooms", [])
+        if not is_watched:
             self._watchdog.reset(area_id)
+            if area_id in self._watchdog_alerted:
+                # Excluded while its alert was up: nothing would ever take the notification down
+                self._watchdog_alerted.discard(area_id)
+                async_dismiss_notification(self.hass, WATCHDOG_NOTIFICATION_ID_PREFIX + area_id)
             return
 
         verdict = self._watchdog.evaluate(

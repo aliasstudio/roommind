@@ -248,6 +248,7 @@ export interface GlobalSettings {
   hidden_rooms?: string[];
   prediction_enabled?: boolean;
   effectiveness_watchdog_enabled?: boolean;
+  effectiveness_watchdog_excluded_rooms?: string[];
   heating_season?: boolean;
   vacation_temp?: number;
   vacation_until?: number | null;

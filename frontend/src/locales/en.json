@@ -409,6 +409,8 @@
   "settings.prediction_enabled_hint": "Show predicted temperature trend in analytics charts. Disable if you experience slow performance.",
   "settings.effectiveness_watchdog": "Watch for devices that do nothing",
   "settings.effectiveness_watchdog_hint": "Notify when a room has been heating or cooling at full power for 20 minutes without the temperature moving. RoomMind first power-cycles the air conditioners — a unit can report the right mode while it never acts on it — and raises a notification if that does not help: the hardware is faulty, or its integration is accepting commands the device never receives.",
+  "settings.effectiveness_watchdog_room_excluded": "room not watched",
+  "settings.effectiveness_watchdog_rooms_excluded": "rooms not watched",
   "vacation.title": "Vacation Mode",
   "vacation.hint": "Sets all rooms to a setback temperature until the end date.",
   "vacation.active_label": "Vacation mode active",

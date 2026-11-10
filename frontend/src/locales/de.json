@@ -409,6 +409,8 @@
   "settings.prediction_enabled_hint": "Zeigt den vorhergesagten Temperaturverlauf im Analyse-Diagramm. Bei langsamer Performance deaktivieren.",
   "settings.effectiveness_watchdog": "Auf wirkungslose Geräte achten",
   "settings.effectiveness_watchdog_hint": "Benachrichtigen, wenn ein Raum 20 Minuten lang mit voller Leistung heizt oder kühlt, ohne dass sich die Temperatur bewegt. RoomMind schaltet die Klimageräte zuerst aus und wieder ein — ein Gerät kann den richtigen Modus melden, während der Kompressor nie anläuft — und meldet sich, wenn das nicht hilft.",
+  "settings.effectiveness_watchdog_room_excluded": "Raum nicht überwacht",
+  "settings.effectiveness_watchdog_rooms_excluded": "Räume nicht überwacht",
   "vacation.title": "Urlaubsmodus",
   "vacation.hint": "Setzt alle Räume auf eine Absenktemperatur bis zum Enddatum.",
   "vacation.active_label": "Urlaubsmodus aktiv",
