@@ -5,6 +5,13 @@
 
 import type { DeviceConfig } from "../types";
 
+/** Louver position keys per running direction, shared by AC devices and schedule blocks. */
+export const SWING_MODE_KEYS = [
+  "heat_swing_mode",
+  "cool_swing_mode",
+] as const satisfies readonly (keyof DeviceConfig)[];
+export type SwingModeKey = (typeof SWING_MODE_KEYS)[number];
+
 const HST_PRIORITY: Record<string, number> = { underfloor: 2, radiator: 1, "": 0 };
 
 /**

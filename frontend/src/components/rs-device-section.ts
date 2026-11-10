@@ -5,7 +5,11 @@ import { getEntitiesForArea } from "../utils/room-state";
 import { localize } from "../utils/localize";
 import { getSelectValue, openEntityInfo } from "../utils/events";
 import { tempUnit, toDisplayDelta, toCelsiusDelta, usesFahrenheit } from "../utils/temperature";
-import { resolveHeatingSystemType } from "../utils/device-utils";
+import {
+  SWING_MODE_KEYS,
+  resolveHeatingSystemType,
+  type SwingModeKey,
+} from "../utils/device-utils";
 import { masterDetailStyles } from "../styles/master-detail-styles";
 import { inputStyles } from "../styles/input-styles";
 import "./shared/rs-master-detail";
@@ -1045,6 +1049,11 @@ export class RsDeviceSection extends LitElement {
                         </div>`
                     : nothing} `
               : nothing}
+            ${this._renderSwingFields(
+              entityId,
+              device,
+              (entityState?.attributes?.swing_modes ?? []) as string[],
+            )}
           `
         : nothing}
       ${isThermostat
@@ -1446,6 +1455,46 @@ export class RsDeviceSection extends LitElement {
       d.entity_id === entityId ? { ...d, fan_max_mode: fanMode } : d,
     );
     this._fireDeviceChanged(newDevices);
+  }
+
+  /** Louver position per running direction; units without swing modes show nothing. */
+  private _renderSwingFields(entityId: string, device: DeviceConfig, swingModes: string[]) {
+    if (swingModes.length === 0) return nothing;
+    const lang = this.hass.language;
+    const keep = "__keep__";
+
+    return SWING_MODE_KEYS.map(
+      (key, index) => html`
+        <div class="detail-field ${index === 0 ? "with-info" : ""}">
+          <ha-select
+            .label=${localize(`devices.${key}`, lang)}
+            .value=${device[key] || keep}
+            .options=${[
+              { value: keep, label: localize("devices.swing_mode_keep", lang) },
+              ...swingModes.map((mode) => ({ value: mode, label: mode })),
+            ]}
+            @selected=${(e: Event) => {
+              const value = getSelectValue(e);
+              this._onSwingModeChange(entityId, key, value === keep ? "" : (value ?? ""));
+            }}
+            @closed=${(e: Event) => e.stopPropagation()}
+            fixedMenuPosition
+          >
+            <ha-list-item value=${keep}>${localize("devices.swing_mode_keep", lang)}</ha-list-item>
+            ${swingModes.map((mode) => html`<ha-list-item value=${mode}>${mode}</ha-list-item>`)}
+          </ha-select>
+          ${index === 0
+            ? html`<rs-info-icon .text=${localize("devices.swing_mode_hint", lang)}></rs-info-icon>`
+            : nothing}
+        </div>
+      `,
+    );
+  }
+
+  private _onSwingModeChange(entityId: string, key: SwingModeKey, value: string): void {
+    this._fireDeviceChanged(
+      this.devices.map((d) => (d.entity_id === entityId ? { ...d, [key]: value } : d)),
+    );
   }
 
   /** Valve number entities of the TRV's own device (opening/closing degree live there). */

@@ -719,5 +719,11 @@
   "roomcard.editor.hide_climate_control": "Schalter für die Klimasteuerung ausblenden",
   "roomcard.editor.hide_temperatures": "Komfort- und Eco-Temperaturen ausblenden",
   "roomcard.paused": "pausiert",
-  "roomcard.editor.compact": "Kompakte Darstellung"
+  "roomcard.editor.compact": "Kompakte Darstellung",
+  "devices.heat_swing_mode": "Lamelle beim Heizen",
+  "devices.cool_swing_mode": "Lamelle beim Kühlen",
+  "devices.swing_mode_keep": "Dem Gerät überlassen",
+  "devices.swing_mode_hint": "RoomMind stellt die vertikale Lamelle hierhin, sobald das Gerät heizt oder kühlt, und wieder zurück, wenn das Gerät sie zurücksetzt. Ein Zeitplanblock kann eine eigene Stellung setzen.",
+  "schedule.editor_heat_swing_mode": "Lamelle beim Heizen",
+  "schedule.editor_cool_swing_mode": "Lamelle beim Kühlen"
 }
