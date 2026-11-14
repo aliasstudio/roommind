@@ -8,6 +8,7 @@ import { tempUnit, toDisplayDelta, toCelsiusDelta, usesFahrenheit } from "../uti
 import {
   SWING_MODE_KEYS,
   resolveHeatingSystemType,
+  resolveTopSwingMode,
   type SwingModeKey,
 } from "../utils/device-utils";
 import { masterDetailStyles } from "../styles/master-detail-styles";
@@ -1462,38 +1463,101 @@ export class RsDeviceSection extends LitElement {
     if (swingModes.length === 0) return nothing;
     const lang = this.hass.language;
     const keep = "__keep__";
+    const hasWarmupSwing = device.has_heat_warmup_swing ?? false;
 
-    return SWING_MODE_KEYS.map(
-      (key, index) => html`
-        <div class="detail-field ${index === 0 ? "with-info" : ""}">
-          <ha-select
-            .label=${localize(`devices.${key}`, lang)}
-            .value=${device[key] || keep}
-            .options=${[
-              { value: keep, label: localize("devices.swing_mode_keep", lang) },
-              ...swingModes.map((mode) => ({ value: mode, label: mode })),
-            ]}
-            @selected=${(e: Event) => {
-              const value = getSelectValue(e);
-              this._onSwingModeChange(entityId, key, value === keep ? "" : (value ?? ""));
-            }}
-            @closed=${(e: Event) => e.stopPropagation()}
-            fixedMenuPosition
-          >
-            <ha-list-item value=${keep}>${localize("devices.swing_mode_keep", lang)}</ha-list-item>
-            ${swingModes.map((mode) => html`<ha-list-item value=${mode}>${mode}</ha-list-item>`)}
-          </ha-select>
-          ${index === 0
-            ? html`<rs-info-icon .text=${localize("devices.swing_mode_hint", lang)}></rs-info-icon>`
-            : nothing}
+    return html`
+      ${SWING_MODE_KEYS.map(
+        (key, index) => html`
+          <div class="detail-field ${index === 0 ? "with-info" : ""}">
+            <ha-select
+              .label=${localize(`devices.${key}`, lang)}
+              .value=${device[key] || keep}
+              .options=${[
+                { value: keep, label: localize("devices.swing_mode_keep", lang) },
+                ...swingModes.map((mode) => ({ value: mode, label: mode })),
+              ]}
+              @selected=${(e: Event) => {
+                const value = getSelectValue(e);
+                this._onSwingModeChange(entityId, key, value === keep ? "" : (value ?? ""));
+              }}
+              @closed=${(e: Event) => e.stopPropagation()}
+              fixedMenuPosition
+            >
+              <ha-list-item value=${keep}>${localize("devices.swing_mode_keep", lang)}</ha-list-item>
+              ${swingModes.map((mode) => html`<ha-list-item value=${mode}>${mode}</ha-list-item>`)}
+            </ha-select>
+            ${index === 0
+              ? html`<rs-info-icon .text=${localize("devices.swing_mode_hint", lang)}></rs-info-icon>`
+              : nothing}
+          </div>
+        `,
+      )}
+      <div class="detail-toggle-row">
+        <ha-checkbox
+          .checked=${hasWarmupSwing}
+          @change=${(e: Event) => {
+            const target = e.target as HTMLElement & { checked: boolean };
+            this._onHeatWarmupSwingToggle(entityId, target.checked, swingModes);
+          }}
+        ></ha-checkbox>
+        <div class="detail-toggle-label">
+          ${localize("devices.heat_warmup_swing", lang)}
+          <rs-info-icon .text=${localize("devices.heat_warmup_swing_hint", lang)}></rs-info-icon>
         </div>
-      `,
-    );
+      </div>
+      ${hasWarmupSwing
+        ? html`
+            <div class="detail-field">
+              <ha-select
+                .label=${localize("devices.heat_warmup_swing_mode", lang)}
+                .value=${device.heat_warmup_swing_mode || (resolveTopSwingMode(swingModes) ?? swingModes[0] ?? "")}
+                .options=${swingModes.map((mode) => ({ value: mode, label: mode }))}
+                @selected=${(e: Event) => {
+                  const value = getSelectValue(e);
+                  this._onHeatWarmupSwingModeChange(entityId, value ?? "");
+                }}
+                @closed=${(e: Event) => e.stopPropagation()}
+                fixedMenuPosition
+              >
+                ${swingModes.map((mode) => html`<ha-list-item value=${mode}>${mode}</ha-list-item>`)}
+              </ha-select>
+            </div>
+          `
+        : nothing}
+    `;
   }
 
   private _onSwingModeChange(entityId: string, key: SwingModeKey, value: string): void {
     this._fireDeviceChanged(
-      this.devices.map((d) => (d.entity_id === entityId ? { ...d, [key]: value } : d)),
+      this.devices.map((device) => (device.entity_id === entityId ? { ...device, [key]: value } : device)),
+    );
+  }
+
+  private _onHeatWarmupSwingToggle(entityId: string, isChecked: boolean, swingModes: string[]): void {
+    const newDevices = this.devices.map((device) => {
+      if (device.entity_id !== entityId) return device;
+      if (!isChecked) {
+        return { ...device, has_heat_warmup_swing: false };
+      }
+      const existingMode = device.heat_warmup_swing_mode;
+      const resolvedMode =
+        existingMode !== undefined && existingMode !== ""
+          ? existingMode
+          : (resolveTopSwingMode(swingModes) ?? swingModes[0] ?? "");
+      return {
+        ...device,
+        has_heat_warmup_swing: true,
+        heat_warmup_swing_mode: resolvedMode,
+      };
+    });
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onHeatWarmupSwingModeChange(entityId: string, value: string): void {
+    this._fireDeviceChanged(
+      this.devices.map((device) =>
+        device.entity_id === entityId ? { ...device, heat_warmup_swing_mode: value } : device,
+      ),
     );
   }
 

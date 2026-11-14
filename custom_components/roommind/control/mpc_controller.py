@@ -17,6 +17,7 @@ from ..const import (
     AC_BOOST_DELTA_MIN,
     AC_COOLING_BOOST_TARGET,
     AC_HEATING_BOOST_TARGET,
+    AC_WARMUP_LOUVER_SECONDS,
     APPROACH_RATE_MIN,
     BANGBANG_COOL_HYSTERESIS,
     BANGBANG_HEAT_HYSTERESIS,
@@ -105,6 +106,8 @@ _active_targets: dict[str, tuple[float | None, float | None]] = {}
 _overshoot_sent: set[str] = set()
 # Devices the hold already throttled to minimum (room past its target), one send per hold (#416).
 _hold_modulated: set[str] = set()
+# Heating start times per AC entity (monotonic timestamp) for initial warm-up louver holding.
+_ac_heat_started_at: dict[str, float] = {}
 # Last proportional setpoint send per device: (monotonic send time, (heat, cool) targets it was
 # computed for). Any other command to the device drops the entry (#317).
 _proportional_sent: dict[str, tuple[float, tuple[float | None, float | None]]] = {}
@@ -298,6 +301,7 @@ def clear_command_cache() -> None:
     _active_targets.clear()
     _overshoot_sent.clear()
     _hold_modulated.clear()
+    _ac_heat_started_at.clear()
     clear_valve_cache()
 
 
@@ -1305,6 +1309,16 @@ def is_mpc_active(
     if can_cool and n_cooling < MIN_ACTIVE_UPDATES:
         return False
     return True
+
+
+def resolve_top_swing_mode(swing_modes: list[str]) -> str | None:
+    """Find a top or upward louver position by keyword."""
+    keywords = ("top", "up", "highest")
+    for mode in swing_modes:
+        lowered = mode.lower()
+        if any(keyword in lowered for keyword in keywords):
+            return mode
+    return None
 
 
 class MPCController:
@@ -3039,12 +3053,25 @@ class MPCController:
         for eid in self.acs:
             state = self.hass.states.get(eid)
             key = SWING_MODE_KEY_BY_STATE.get(state.state) if state is not None else None
+            if key != "heat_swing_mode":
+                _ac_heat_started_at.pop(eid, None)
             if key is None or eid in exclude_eids:
                 continue
-            swing_mode = (schedule_swing or {}).get(key) or (get_device_by_eid(self._devices, eid) or {}).get(key)
+
+            device = get_device_by_eid(self._devices, eid) or {}
+            available_modes = state.attributes.get("swing_modes") or []
+            swing_mode = (schedule_swing or {}).get(key) or device.get(key)
+
+            if key == "heat_swing_mode" and device.get("has_heat_warmup_swing"):
+                started_at = _ac_heat_started_at.setdefault(eid, _now())
+                if _now() - started_at < AC_WARMUP_LOUVER_SECONDS:
+                    warmup_mode = device.get("heat_warmup_swing_mode") or resolve_top_swing_mode(available_modes)
+                    if warmup_mode and warmup_mode in available_modes:
+                        swing_mode = warmup_mode
+
             if not swing_mode or state.attributes.get("swing_mode") == swing_mode:
                 continue
-            if swing_mode not in (state.attributes.get("swing_modes") or []):
+            if swing_mode not in available_modes:
                 _LOGGER.debug("Area '%s': '%s' has no swing mode '%s'", self._area_id, eid, swing_mode)
                 continue
             await self._call("set_swing_mode", {"entity_id": eid, "swing_mode": swing_mode})
