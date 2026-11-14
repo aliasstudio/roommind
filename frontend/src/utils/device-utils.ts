@@ -12,6 +12,15 @@ export const SWING_MODE_KEYS = [
 ] as const satisfies readonly (keyof DeviceConfig)[];
 export type SwingModeKey = (typeof SWING_MODE_KEYS)[number];
 
+/** Find a top or upward louver position by keyword (top, up, highest). */
+export const resolveTopSwingMode = (swingModes: readonly string[]): string | undefined => {
+  const keywords = ["top", "up", "highest"];
+  return swingModes.find((mode) => {
+    const lowered = mode.toLowerCase();
+    return keywords.some((keyword) => lowered.includes(keyword));
+  });
+};
+
 const HST_PRIORITY: Record<string, number> = { underfloor: 2, radiator: 1, "": 0 };
 
 /**

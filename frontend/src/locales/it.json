@@ -642,5 +642,14 @@
   "roomcard.editor.hide_climate_control": "Nascondi interruttore del controllo climatizzazione",
   "roomcard.editor.hide_temperatures": "Nascondi temperature comfort ed eco",
   "roomcard.paused": "in pausa",
-  "roomcard.editor.compact": "Visualizzazione compatta"
+  "roomcard.editor.compact": "Visualizzazione compatta",
+  "devices.heat_swing_mode": "Deflettore durante il riscaldamento",
+  "devices.cool_swing_mode": "Deflettore durante il raffrescamento",
+  "devices.heat_warmup_swing": "Usa posizione alta durante il preriscaldamento",
+  "devices.heat_warmup_swing_hint": "Orienta il deflettore verso l'alto per i primi 3 minuti di riscaldamento per evitare di soffiare aria fredda prima che la batteria si riscaldi.",
+  "devices.heat_warmup_swing_mode": "Deflettore durante il preriscaldamento",
+  "devices.swing_mode_keep": "Lascia all'unità",
+  "devices.swing_mode_hint": "RoomMind posiziona il deflettore verticale ogni volta che l'unità riscalda o raffresca. Un blocco di programmazione può impostare la propria posizione.",
+  "schedule.editor_heat_swing_mode": "Deflettore durante il riscaldamento",
+  "schedule.editor_cool_swing_mode": "Deflettore durante il raffrescamento"
 }

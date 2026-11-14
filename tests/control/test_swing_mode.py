@@ -6,7 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from custom_components.roommind.control.mpc_controller import MPCController, clear_command_cache
+from custom_components.roommind.const import AC_WARMUP_LOUVER_SECONDS
+from custom_components.roommind.control.mpc_controller import (
+    MPCController,
+    clear_command_cache,
+    resolve_top_swing_mode,
+)
 from custom_components.roommind.control.thermal_model import RoomModelManager
 
 from .conftest import build_hass, make_room
@@ -75,3 +80,96 @@ async def test_louver_is_left_alone(hvac_state, swing_mode, device, exclude):
     hass, ctrl = _controller(hvac_state, swing_mode, **device)
     await ctrl.async_apply_swing_modes(None, exclude)
     assert _swing_calls(hass) == []
+
+
+def test_resolve_top_swing_mode():
+    assert resolve_top_swing_mode(["Middle", "Lower fix", "Top fix"]) == "Top fix"
+    assert resolve_top_swing_mode(["low", "medium", "highest"]) == "highest"
+    assert resolve_top_swing_mode(["Up", "Down"]) == "Up"
+    assert resolve_top_swing_mode(["1", "2", "3"]) is None
+
+
+@pytest.mark.asyncio
+async def test_warmup_uses_top_position_initially():
+    hass, ctrl = _controller(
+        "heat",
+        "Not set",
+        heat_swing_mode="Lower fix",
+        has_heat_warmup_swing=True,
+        heat_warmup_swing_mode="Top fix",
+    )
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix"]
+
+
+@pytest.mark.asyncio
+async def test_warmup_auto_detects_top_position_by_keyword():
+    hass, ctrl = _controller(
+        "heat",
+        "Not set",
+        heat_swing_mode="Lower fix",
+        has_heat_warmup_swing=True,
+        heat_warmup_swing_mode="",
+    )
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix"]
+
+
+@pytest.mark.asyncio
+async def test_warmup_switches_to_heat_position_after_timeout(monkeypatch):
+    current_time = 1000.0
+    monkeypatch.setattr("custom_components.roommind.control.mpc_controller._now", lambda: current_time)
+
+    hass, ctrl = _controller(
+        "heat",
+        "Not set",
+        heat_swing_mode="Lower fix",
+        has_heat_warmup_swing=True,
+        heat_warmup_swing_mode="Top fix",
+    )
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix"]
+
+    # Device acknowledged "Top fix", time advances but still within warmup period
+    hass.states.get(AC).attributes["swing_mode"] = "Top fix"
+    current_time += AC_WARMUP_LOUVER_SECONDS - 1
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix"]  # no new call
+
+    # Warmup period ends: switches to "Lower fix"
+    current_time += 1.0
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix", "Lower fix"]
+
+
+@pytest.mark.asyncio
+async def test_switching_away_from_heat_resets_warmup_timer(monkeypatch):
+    current_time = 1000.0
+    monkeypatch.setattr("custom_components.roommind.control.mpc_controller._now", lambda: current_time)
+
+    hass, ctrl = _controller(
+        "heat",
+        "Not set",
+        heat_swing_mode="Lower fix",
+        has_heat_warmup_swing=True,
+        heat_warmup_swing_mode="Top fix",
+    )
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix"]
+
+    # Advance past warmup
+    hass.states.get(AC).attributes["swing_mode"] = "Top fix"
+    current_time += AC_WARMUP_LOUVER_SECONDS
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix", "Lower fix"]
+
+    # Device turns off
+    hass.states.get(AC).state = "off"
+    hass.states.get(AC).attributes["swing_mode"] = "Lower fix"
+    await ctrl.async_apply_swing_modes(None, set())
+
+    # Device starts heating again: fresh warmup period
+    hass.states.get(AC).state = "heat"
+    current_time += 60.0
+    await ctrl.async_apply_swing_modes(None, set())
+    assert _swing_calls(hass) == ["Top fix", "Lower fix", "Top fix"]

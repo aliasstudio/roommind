@@ -137,6 +137,8 @@ export interface DeviceConfig {
   fan_max_mode?: string; // auto: strongest allowed ladder speed ("" = ladder max)
   heat_swing_mode?: string; // ac: louver while heating ("" = leave to the unit)
   cool_swing_mode?: string; // ac: louver while cooling ("" = leave to the unit)
+  has_heat_warmup_swing?: boolean; // ac: use top louver position during initial heating warm-up
+  heat_warmup_swing_mode?: string; // ac: warm-up louver position ("" = auto-detect top/up/highest)
   cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow (null = device min)
   dehumidify_target?: number | null; // ac: dry-mode setpoint override (null = room's scheduled cool target)
   setback_auto_off?: boolean; // setback ends in off after an hour without demand, default off (#255)
