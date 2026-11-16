@@ -30,6 +30,7 @@
   "room.alias.clear": "Revenir au nom de la pièce",
   "override.comfort": "Confort",
   "override.eco": "Éco",
+  "override.turbo": "Turbo",
   "override.custom": "Personnalisé",
   "override.target": "Cible",
   "override.heat_to": "Chauffer jusqu'à",
