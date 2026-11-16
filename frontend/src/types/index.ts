@@ -357,6 +357,10 @@ export interface HassEntity {
 
 export interface AnalyticsDataPoint {
   ts: number;
+  /** AC fan mode while it ran (fork). */
+  fan_mode?: string | null;
+  /** The AC dehumidified at this point (fork). */
+  dehumidifying?: boolean;
   room_temp: number | null;
   outdoor_temp: number | null;
   target_temp: number | null;
@@ -445,6 +449,7 @@ export interface ModelDay {
 }
 
 export interface AnalyticsData {
+  dehumidify?: { enabled: boolean; threshold: number; stop: number };
   detail: AnalyticsDataPoint[];
   history: AnalyticsDataPoint[];
   forecast?: AnalyticsDataPoint[];

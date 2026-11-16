@@ -382,6 +382,8 @@
   "analytics.history_chart": "History",
   "analytics.panel_outdoor": "Outdoor temperature",
   "analytics.humidity": "Humidity",
+  "analytics.fan_speed": "Fan speed",
+  "analytics.dehumidify_period": "Dehumidifying",
   "analytics.target_band": "Target range",
   "analytics.humidity_very_dry": "very dry",
   "analytics.humidity_dry": "dry",

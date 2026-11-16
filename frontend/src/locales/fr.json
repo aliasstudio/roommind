@@ -382,6 +382,8 @@
   "analytics.history_chart": "Historique",
   "analytics.panel_outdoor": "Température extérieure",
   "analytics.humidity": "Humidité",
+  "analytics.fan_speed": "Vitesse du ventilateur",
+  "analytics.dehumidify_period": "Déshumidification",
   "analytics.target_band": "Plage cible",
   "analytics.humidity_very_dry": "très sec",
   "analytics.humidity_dry": "sec",
