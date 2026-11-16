@@ -14,8 +14,10 @@ import { formatNumber } from "../utils/format";
 import { RsScheduleBase } from "./shared/rs-schedule-base";
 import { inputStyles } from "../styles/input-styles";
 import { priceShiftLabel } from "./room-detail/rs-price-shift";
-import { isAdmin, isEditableSchedule, readWeek } from "../utils/schedule-api";
-import { dayTimes, nowInZone, type Week } from "../utils/schedule-week";
+import { createSchedule, isAdmin, isEditableSchedule, readWeek } from "../utils/schedule-api";
+import { dayTimes, nowInZone, parseWeek, type Week } from "../utils/schedule-week";
+import { showToast } from "../utils/toast";
+import { errorText } from "../utils/errors";
 import "./shared/rs-list-row";
 import "./shared/rs-info-icon";
 import "./schedule/rs-schedule-create";
@@ -94,6 +96,7 @@ export class RsScheduleSettings extends RsScheduleBase {
   @property({ type: String }) public roomName = "";
 
   @state() private _creating = false;
+  @state() private _moving = false;
   /** Week of the active schedule for today's timeline; `_weekKey` = what it was read for. */
   @state() private _week: Week | null = null;
   @state() private _now = nowInZone(undefined);
@@ -206,7 +209,9 @@ export class RsScheduleSettings extends RsScheduleBase {
         this.schedules.length > 0
           ? this.schedules.map((schedule, index) => {
               const state = this._getScheduleState(index, this.schedules.length);
-              const name = this._getFriendlyName(schedule.entity_id);
+              const name = schedule.blocks
+                ? (schedule.name ?? "")
+                : this._getFriendlyName(schedule.entity_id);
               return html`
                 <rs-list-row
                   clickable
@@ -223,6 +228,7 @@ export class RsScheduleSettings extends RsScheduleBase {
                   >${state === "active" ? this._renderToday() : nothing}</rs-list-row
                 >
                 ${this._renderRejectedTempWarning(state, true)}
+                ${schedule.blocks ? this._renderMoveRow(index) : nothing}
               `;
             })
           : html`<rs-list-row
@@ -633,6 +639,41 @@ export class RsScheduleSettings extends RsScheduleBase {
     const next = [...this.schedules];
     [next[index], next[target]] = [next[target], next[index]];
     this._emitSchedules(next);
+  }
+
+  /** An inline schedule cannot be edited in the panel: offer to turn it into a helper. */
+  private _renderMoveRow(index: number) {
+    const l = this.hass.language;
+    if (!isAdmin(this.hass)) return nothing;
+    return html`<rs-list-row
+      clickable
+      plain-icon
+      variant="primary"
+      icon="mdi:calendar-import"
+      .heading=${localize("schedule.inline_move", l)}
+      .secondary=${localize("schedule.inline_move_hint", l)}
+      ?disabled=${this._moving}
+      @row-click=${() => void this._moveToHelper(index)}
+    ></rs-list-row>`;
+  }
+
+  private async _moveToHelper(index: number): Promise<void> {
+    const schedule = this.schedules[index];
+    if (!schedule?.blocks || this._moving) return;
+    const l = this.hass.language;
+    const name = schedule.name || localize("schedule.inline_default_name", l);
+    this._moving = true;
+    try {
+      const entityId = await createSchedule(this.hass, name, parseWeek(schedule.blocks));
+      this._emitSchedules(
+        this.schedules.map((entry, i) => (i === index ? { entity_id: entityId } : entry)),
+      );
+      showToast(this, localize("schedule.inline_moved", l, { name }), l);
+    } catch (err) {
+      showToast(this, errorText(err, localize("schedule.inline_move_error", l), l), l);
+    } finally {
+      this._moving = false;
+    }
   }
 
   private _emitSchedules(value: ScheduleEntry[]) {
