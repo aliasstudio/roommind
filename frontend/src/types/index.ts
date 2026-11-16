@@ -260,6 +260,13 @@ export interface GlobalSettings {
   coil_dry_fan_mode?: string;
   coil_dry_min_cooling_minutes?: number;
   coil_dry_drain_minutes?: number;
+  heating_season?: boolean;
+  fan_full_band?: number;
+  effectiveness_watchdog_enabled?: boolean;
+  effectiveness_watchdog_excluded_rooms?: string[];
+  dehumidify_enabled?: boolean;
+  dehumidify_humidity_threshold?: number;
+  dehumidify_stop_threshold?: number;
   mold_detection_enabled?: boolean;
   mold_humidity_threshold?: number;
   mold_f_rsi?: number;

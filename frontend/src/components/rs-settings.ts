@@ -157,6 +157,13 @@ const SETTINGS: [keyof GlobalSettings, SettingSync][] = [
   ["coil_dry_fan_mode", plain("coilDryFanMode", "low")],
   ["coil_dry_min_cooling_minutes", plain("coilDryMinCoolingMinutes", 10)],
   ["coil_dry_drain_minutes", plain("coilDryDrainMinutes", 0)],
+  ["heating_season", plain("heatingSeason", true)],
+  ["fan_full_band", plain("fanFullBand", 1)],
+  ["effectiveness_watchdog_enabled", plain("effectivenessWatchdogEnabled", true)],
+  ["effectiveness_watchdog_excluded_rooms", plain("effectivenessWatchdogExcludedRooms", [])],
+  ["dehumidify_enabled", plain("dehumidifyEnabled", false)],
+  ["dehumidify_humidity_threshold", plain("dehumidifyThreshold", 60)],
+  ["dehumidify_stop_threshold", plain("dehumidifyStopThreshold", 55)],
   ["mold_detection_enabled", plain("moldDetectionEnabled", false)],
   ["mold_humidity_threshold", plain("moldHumidityThreshold", 70)],
   ["mold_f_rsi", plain("moldFRsi", 0.8)],
@@ -235,6 +242,13 @@ export class RsSettings extends LitElement {
   @state() private _coilDryFanMode = "low";
   @state() private _coilDryMinCoolingMinutes = 10;
   @state() private _coilDryDrainMinutes = 0;
+  @state() private _heatingSeason = true;
+  @state() private _fanFullBand = 1;
+  @state() private _effectivenessWatchdogEnabled = true;
+  @state() private _effectivenessWatchdogExcludedRooms: string[] = [];
+  @state() private _dehumidifyEnabled = false;
+  @state() private _dehumidifyThreshold = 60;
+  @state() private _dehumidifyStopThreshold = 55;
   @state() private _loaded = false;
   // A failed load must not render the forms: the next full-payload save would write defaults.
   @state() private _loadFailed = false;
@@ -474,6 +488,7 @@ export class RsSettings extends LitElement {
           .hass=${this.hass}
           .groupByFloor=${this._groupByFloor}
           .climateControlActive=${this._climateControlActive}
+          .heatingSeason=${this._heatingSeason}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-general>`;
       case "sensors":
@@ -501,6 +516,10 @@ export class RsSettings extends LitElement {
           .outdoorHeatingMax=${this._outdoorHeatingMax}
           .predictionEnabled=${this._predictionEnabled}
           .scheduleOffAction=${this._scheduleOffAction}
+          .fanFullBand=${this._fanFullBand}
+          .rooms=${this.rooms}
+          .effectivenessWatchdogEnabled=${this._effectivenessWatchdogEnabled}
+          .effectivenessWatchdogExcludedRooms=${this._effectivenessWatchdogExcludedRooms}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-control>`;
       case "presence":
@@ -554,6 +573,9 @@ export class RsSettings extends LitElement {
           .moldSustainedMinutes=${this._moldSustainedMinutes}
           .moldPreventionEnabled=${this._moldPreventionEnabled}
           .moldPreventionIntensity=${this._moldPreventionIntensity}
+          .dehumidifyEnabled=${this._dehumidifyEnabled}
+          .dehumidifyThreshold=${this._dehumidifyThreshold}
+          .dehumidifyStopThreshold=${this._dehumidifyStopThreshold}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-mold>`;
       case "notifications":

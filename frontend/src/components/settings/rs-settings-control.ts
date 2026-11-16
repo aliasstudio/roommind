@@ -5,7 +5,7 @@ import { html, css, nothing } from "lit";
 import { RsSettingsBase } from "./rs-settings-base";
 import "../shared/rs-number-field";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant } from "../../types";
+import type { HomeAssistant, RoomConfig } from "../../types";
 import { localize } from "../../utils/localize";
 import { preheatLeadHours } from "../../utils/constants";
 import { formatHours } from "../../utils/format";
@@ -23,6 +23,10 @@ export class RsSettingsControl extends RsSettingsBase {
   @property({ type: Number }) public outdoorHeatingMax = 22;
   @property({ type: Boolean }) public predictionEnabled = true;
   @property({ type: String }) public scheduleOffAction: "eco" | "off" = "eco";
+  @property({ type: Number }) public fanFullBand = 1;
+  @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
+  @property({ type: Boolean }) public effectivenessWatchdogEnabled = true;
+  @property({ type: Array }) public effectivenessWatchdogExcludedRooms: string[] = [];
   /** Slider position while dragging, so the pre-heat line follows before the value is saved. */
   @state() private _dragWeight: number | null = null;
 
@@ -148,6 +152,64 @@ export class RsSettingsControl extends RsSettingsBase {
           }}
         ></rs-segmented>
       </div>
+
+      <div class="settings-section">
+        <rs-number-field
+          .hass=${this.hass}
+          kind="temperature-delta"
+          .label=${localize("settings.fan_full_band", l)}
+          .hint=${localize("settings.fan_full_band_hint", l)}
+          .min=${0.3}
+          .max=${2}
+          .step=${0.1}
+          .value=${this.fanFullBand}
+          @value-changed=${(e: CustomEvent<{ value: number }>) =>
+            this._fire("fanFullBand", e.detail.value)}
+        ></rs-number-field>
+      </div>
+
+      <div class="settings-section">
+        <rs-list-row
+          switch
+          wrap
+          .heading=${localize("settings.effectiveness_watchdog", l)}
+          .secondary=${localize("settings.effectiveness_watchdog_hint", l)}
+          .checked=${this.effectivenessWatchdogEnabled}
+          @toggle-changed=${(e: CustomEvent<boolean>) =>
+            this._fire("effectivenessWatchdogEnabled", e.detail)}
+        ></rs-list-row>
+        ${this.effectivenessWatchdogEnabled ? this._renderWatchdogRooms() : nothing}
+      </div>
+    `;
+  }
+
+  private _renderWatchdogRooms() {
+    const l = this.hass.language;
+    const rooms = Object.entries(this.rooms)
+      .map(([areaId, config]) => ({
+        areaId,
+        name: config.display_name || this.hass.areas?.[areaId]?.name || areaId,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (rooms.length === 0) return nothing;
+    const excluded = this.effectivenessWatchdogExcludedRooms;
+    return html`
+      <h3 class="section-title">${localize("settings.effectiveness_watchdog_rooms", l)}</h3>
+      ${rooms.map(
+        (room) =>
+          html`<rs-list-row
+            switch
+            .heading=${room.name}
+            .checked=${!excluded.includes(room.areaId)}
+            @toggle-changed=${(e: CustomEvent<boolean>) =>
+              this._fire(
+                "effectivenessWatchdogExcludedRooms",
+                e.detail
+                  ? excluded.filter((areaId) => areaId !== room.areaId)
+                  : [...excluded, room.areaId],
+              )}
+          ></rs-list-row>`,
+      )}
     `;
   }
 
