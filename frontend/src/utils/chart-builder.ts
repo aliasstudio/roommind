@@ -11,6 +11,53 @@ import { HUMIDITY_LEVELS, humidityAxis, humidityLevel } from "./humidity";
 import { REASON_LABELS, TARGET_REASON_GROUPS, targetReasons } from "./target-reason";
 import { MAX_SAMPLE_GAP_MS } from "./analytics-spans";
 
+/**
+ * Coarse strength of a fan mode label (mirrors the backend ladder), 1 to 7 for the stepped
+ * fan panel. Ungraded labels (auto, diffuse, natural) give null and are not plotted.
+ */
+const FAN_RANK_TOKENS: ReadonlyArray<[string, number]> = [
+  ["mid-high", 5],
+  ["medium-high", 5],
+  ["mid-low", 3],
+  ["medium-low", 3],
+  ["silent", 1],
+  ["mute", 1],
+  ["quiet", 1],
+  ["night", 1],
+  ["sleep", 1],
+  ["turbo", 7],
+  ["strong", 7],
+  ["powerful", 7],
+  ["boost", 7],
+  ["max", 7],
+  ["high", 6],
+  ["medium", 4],
+  ["mid", 4],
+  ["low", 2],
+  ["min", 2],
+];
+const FAN_UNGRADED = ["auto", "diffuse", "natural"];
+const FAN_COLOR = "rgb(0, 150, 136)";
+const DEHUMIDIFY_COLOR = "rgb(3, 169, 244)";
+
+export const fanRank = (label: string): number | null => {
+  const lowered = label.trim().toLowerCase();
+  if (!lowered || FAN_UNGRADED.some((token) => lowered.includes(token))) return null;
+  return FAN_RANK_TOKENS.find(([token]) => lowered.includes(token))?.[1] ?? null;
+};
+
+/** One label per fan level in the data, for the axis ticks. */
+export const fanLevelNames = (
+  points: ReadonlyArray<Pick<AnalyticsDataPoint, "fan_mode">>,
+): Map<number, string> => {
+  const names = new Map<number, string>();
+  for (const point of points) {
+    const rank = point.fan_mode ? fanRank(point.fan_mode) : null;
+    if (rank !== null && point.fan_mode && !names.has(rank)) names.set(rank, point.fan_mode);
+  }
+  return names;
+};
+
 const FORECAST_MS = 3 * 3600_000;
 const HUMIDITY_COLOR = "rgb(233, 30, 99)";
 const CHART_HEIGHT = 300;
@@ -25,14 +72,15 @@ const PANEL_BOTTOM = 24;
  * shows while its series has data and is not hidden in the legend. A new panel = an entry
  * here plus its series tagged with `panel` in buildChartSeries.
  */
-export type SubPanel = "outdoor" | "humidity" | "co2" | "price";
+export type SubPanel = "outdoor" | "humidity" | "fan" | "co2" | "price";
 export const SUB_PANELS: Record<SubPanel, { height: number; series: string }> = {
   outdoor: { height: 68, series: "outdoor_temp" },
   humidity: { height: 84, series: "humidity" },
+  fan: { height: 68, series: "fan_speed" },
   co2: { height: 68, series: "co2" },
   price: { height: 68, series: "price" },
 };
-export const SUB_PANEL_ORDER: readonly SubPanel[] = ["outdoor", "humidity", "co2", "price"];
+export const SUB_PANEL_ORDER: readonly SubPanel[] = ["outdoor", "humidity", "fan", "co2", "price"];
 // Neutral: the line and area take the level colours (priceVisualMap), gold is the price target
 const PRICE_COLOR = "rgb(128, 128, 128)";
 /** Mirrors COMFORT_TOLERANCE_K (analytics_stats): the summary counts this far outside as on target. */
@@ -94,6 +142,8 @@ export interface ChartBuildContext {
   colors?: ChartColors;
   /** Legend entries switched off: their rows stay out of the tooltip. */
   hidden?: ReadonlySet<string>;
+  /** Dehumidify start and stop humidity, drawn on the humidity panel while enabled. */
+  dehumidify?: { enabled: boolean; threshold: number; stop: number };
   /** The room follows the price: draw the price panel. */
   showPrice?: boolean;
   /** Touch screen: pinch zooms, one finger pans only once zoomed so the page still scrolls. */
@@ -144,6 +194,7 @@ const PANEL_TITLE_KEYS: Record<SubPanel | "main", TranslationKey> = {
   main: "analytics.temperature",
   outdoor: "analytics.panel_outdoor",
   humidity: "analytics.humidity",
+  fan: "analytics.fan_speed",
   co2: "analytics.co2",
   price: "analytics.price",
 };
@@ -158,11 +209,13 @@ export function panelTitle(
   const unit =
     panel === "humidity"
       ? "%"
-      : panel === "co2"
-        ? "ppm"
-        : panel === "price"
-          ? units.price
-          : units.temp;
+      : panel === "fan"
+        ? ""
+        : panel === "co2"
+          ? "ppm"
+          : panel === "price"
+            ? units.price
+            : units.temp;
   return unit ? `${title} (${unit})` : title;
 }
 
@@ -633,6 +686,72 @@ export function buildChartSeries(
     });
   }
 
+  const fanData = points.flatMap((point): Array<[number, number]> => {
+    const rank = point.fan_mode ? fanRank(point.fan_mode) : null;
+    return rank === null ? [] : [[point.ts * 1000, rank]];
+  });
+  if (fanData.length > 0 && !isOutdoor) {
+    series.push({
+      id: "fan_speed",
+      type: "line",
+      name: localize("analytics.fan_speed", l),
+      color: FAN_COLOR,
+      data: fanData,
+      step: "end",
+      showSymbol: false,
+      lineStyle: { width: 1.5 },
+      panel: "fan",
+    });
+  }
+
+  const dehumidifyData = points.map((point): [number, number | null] => [
+    point.ts * 1000,
+    point.dehumidifying ? 999 : null,
+  ]);
+  if (dehumidifyData.some(([, value]) => value !== null)) {
+    series.push({
+      id: "dehumidify_events",
+      type: "line",
+      name: localize("analytics.dehumidify_period", l),
+      color: DEHUMIDIFY_COLOR,
+      data: dehumidifyData,
+      showSymbol: false,
+      lineStyle: { width: 0 },
+      areaStyle: { color: DEHUMIDIFY_COLOR, opacity: 0.12, origin: "start" },
+      tooltip: { show: false },
+      silent: true,
+      connectNulls: false,
+      z: -1,
+      panel: "humidity",
+    });
+  }
+
+  if (humidityData.length > 0 && ctx.dehumidify?.enabled) {
+    const x0 = ctx.rangeStart;
+    const x1 = chartAnchor + FORECAST_MS;
+    const { threshold, stop } = ctx.dehumidify;
+    series.push({
+      id: "dehumidify_limits",
+      type: "line",
+      name: "",
+      color: DEHUMIDIFY_COLOR,
+      data: [
+        [x0, threshold],
+        [x1, threshold],
+        [x1, null],
+        [x0, stop],
+        [x1, stop],
+      ],
+      showSymbol: false,
+      lineStyle: { width: 1, type: "dotted" },
+      panel: "humidity",
+      tooltip: { show: false },
+      silent: true,
+      connectNulls: false,
+      z: -1,
+    });
+  }
+
   const priceData = points.flatMap((p): Array<[number, number]> =>
     p.price != null ? [[p.ts * 1000, p.price]] : [],
   );
@@ -837,6 +956,7 @@ export function buildChartOptions(
             if (level !== "good") value += ` (${localize(`analytics.humidity_${level}`, l)})`;
           }
           if (sid === "co2") value = `${formatNumber(v, hass, 0)} ppm`;
+          if (sid === "fan_speed") value = closest?.fan_mode ?? "";
           if (sid === "price") {
             value = new Intl.NumberFormat(l, { maximumSignificantDigits: 4 }).format(v);
             if (ctx.priceUnit) value += `\u00A0${ctx.priceUnit}`;
@@ -951,6 +1071,20 @@ function co2Axis(
   };
 }
 
+/** One tick per fan level in the data, named after the device's label. */
+function fanAxis(points: AnalyticsDataPoint[], gridIndex: number): Record<string, unknown> {
+  const names = fanLevelNames(points);
+  const ranks = [...names.keys()];
+  return {
+    type: "value",
+    gridIndex,
+    min: Math.min(...ranks, 1),
+    max: Math.max(...ranks, 2),
+    interval: 1,
+    axisLabel: { formatter: (value: number) => names.get(value) ?? "" },
+  };
+}
+
 function panelAxis(
   panel: SubPanel,
   points: AnalyticsDataPoint[],
@@ -962,6 +1096,7 @@ function panelAxis(
     return { ...humidityAxis(points, gridIndex), axisLabel: unitLabel("%", hass) };
   if (panel === "outdoor") return outdoorAxis(points, gridIndex, hass);
   if (panel === "co2") return co2Axis(points, gridIndex, hass);
+  if (panel === "fan") return fanAxis(points, gridIndex);
   // Price: whatever unit the source uses; bounds from the prices, the level bands reach far above
   const prices = points.map((p) => p.price).filter((v): v is number => v != null);
   const low = prices.length > 0 ? prices.reduce((a, b) => Math.min(a, b)) : 0;

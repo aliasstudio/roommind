@@ -134,6 +134,7 @@ export class RsAnalyticsChart extends LitElement {
       isOutdoor: this.isOutdoor,
       targetBand: this.targetBand,
       priceUnit: this.data?.price_unit ?? "",
+      dehumidify: this.data?.dehumidify,
       touch: this._touch,
       zoomed: this._zoomed,
       colors: this._chartColors(),

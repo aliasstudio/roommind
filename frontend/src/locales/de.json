@@ -382,6 +382,8 @@
   "analytics.history_chart": "Verlauf",
   "analytics.panel_outdoor": "Außentemperatur",
   "analytics.humidity": "Luftfeuchte",
+  "analytics.fan_speed": "Lüftergeschwindigkeit",
+  "analytics.dehumidify_period": "Entfeuchtung",
   "analytics.target_band": "Zielbereich",
   "analytics.humidity_very_dry": "sehr trocken",
   "analytics.humidity_dry": "trocken",
