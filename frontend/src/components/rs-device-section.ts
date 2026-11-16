@@ -4,8 +4,13 @@ import type { HomeAssistant, HassArea, DeviceConfig, DeviceType } from "../types
 import { getEntitiesForArea } from "../utils/room-state";
 import { localize } from "../utils/localize";
 import { getSelectValue, openEntityInfo } from "../utils/events";
-import { tempUnit, toDisplayDelta } from "../utils/temperature";
-import { fanModeLabel, resolveHeatingSystemType } from "../utils/device-utils";
+import { tempUnit, toCelsius, toDisplayDelta } from "../utils/temperature";
+import {
+  SWING_MODE_KEYS,
+  fanModeLabel,
+  resolveHeatingSystemType,
+  resolveTopSwingMode,
+} from "../utils/device-utils";
 import { formatMinutes, formatNumber } from "../utils/format";
 import { tokens } from "../styles/tokens";
 import { inputStyles } from "../styles/input-styles";
@@ -30,6 +35,21 @@ const IDLE_SETBACK_OFFSET_C = 2;
 const INHERIT = "__inherit__";
 
 const fromInherit = (value: string | undefined): string => (value === INHERIT ? "" : (value ?? ""));
+
+/** UI-only sentinel for a stored "" that leaves the setting to the device. */
+const KEEP = "__keep__";
+
+const FAN_CONTROLS = ["off", "fixed", "auto"] as const;
+
+interface ModeSelect {
+  label: string;
+  info?: string;
+  value: string | undefined;
+  emptyLabel?: string;
+  modes: string[];
+  format: (mode: string) => string;
+  onPick: (value: string) => void;
+}
 
 /** Below this own width the dialog shows the device list and one device's settings in turn. */
 const NARROW_PX = 600;
@@ -608,7 +628,13 @@ export class RsDeviceSection extends LitElement {
       ${hasSensor && !hasValve ? this._renderControlGroup(device) : nothing}
       ${this._renderIdleGroup(device)}
       ${isTrv && (showValve || this.valveProtectionEnabled) ? this._renderValveGroup(device) : nothing}
-      ${device.type === "ac" ? this._renderCoilDryGroup(device) : nothing}
+      ${
+        device.type === "ac"
+          ? html`${this._renderFanGroup(device)} ${this._renderLouverGroup(device)}
+            ${hasSensor ? this._renderAcSetpointGroup(device) : nothing}
+            ${this._renderCoilDryGroup(device)}`
+          : nothing
+      }
       <div class="group">${this._renderRemove(device)}</div>
     `;
   }
@@ -985,6 +1011,186 @@ export class RsDeviceSection extends LitElement {
   }
 
   /** A fan speed as Home Assistant names it for this device ("low" → "Niedrig"). */
+  private _renderFanGroup(device: DeviceConfig) {
+    const l = this.hass.language;
+    const id = device.entity_id;
+    const fanModes = (this.hass.states[id]?.attributes?.fan_modes ?? []) as string[];
+    if (fanModes.length === 0) return nothing;
+    const fanControl = device.fan_control ?? "off";
+    const fanLabel = (mode: string) => this._fanModeLabel(id, mode);
+    return html`<div class="group">
+      <h4 class="group-title">
+        ${localize("devices.fan_control", l)}
+        <rs-info-icon .text=${localize("devices.fan_control_info", l)}></rs-info-icon>
+      </h4>
+      ${this._choice(
+        localize("devices.fan_control", l),
+        FAN_CONTROLS.map((control) => ({
+          value: control,
+          label: localize(`devices.fan_control_${control}`, l),
+        })),
+        fanControl,
+        (value) =>
+          this._patchDevice(id, { fan_control: FAN_CONTROLS.find((control) => control === value) }),
+      )}
+      ${
+        fanControl === "fixed"
+          ? this._renderModeSelect({
+              label: localize("devices.active_fan_mode", l),
+              info: localize("devices.active_fan_mode_info", l),
+              value: device.active_fan_mode,
+              emptyLabel: localize("devices.active_fan_mode_keep", l),
+              modes: fanModes,
+              format: fanLabel,
+              onPick: (value) => this._patchDevice(id, { active_fan_mode: value }),
+            })
+          : nothing
+      }
+      ${
+        fanControl === "auto"
+          ? html`${this._renderModeSelect({
+              label: localize("devices.fan_min_mode", l),
+              info: localize("devices.fan_auto_info", l),
+              value: device.fan_min_mode,
+              emptyLabel: localize("devices.fan_bound_default", l),
+              modes: fanModes,
+              format: fanLabel,
+              onPick: (value) => this._patchDevice(id, { fan_min_mode: value }),
+            })}
+            ${this._renderModeSelect({
+              label: localize("devices.fan_max_mode", l),
+              value: device.fan_max_mode,
+              emptyLabel: localize("devices.fan_bound_default", l),
+              modes: fanModes,
+              format: fanLabel,
+              onPick: (value) => this._patchDevice(id, { fan_max_mode: value }),
+            })}`
+          : nothing
+      }
+    </div>`;
+  }
+
+  private _renderLouverGroup(device: DeviceConfig) {
+    const l = this.hass.language;
+    const id = device.entity_id;
+    const swingModes = (this.hass.states[id]?.attributes?.swing_modes ?? []) as string[];
+    if (swingModes.length === 0) return nothing;
+    const hasWarmupSwing = device.has_heat_warmup_swing ?? false;
+    const topMode = resolveTopSwingMode(swingModes) ?? swingModes[0];
+    return html`<div class="group">
+      <h4 class="group-title">
+        ${localize("devices.group_louver", l)}
+        <rs-info-icon .text=${localize("devices.swing_mode_info", l)}></rs-info-icon>
+      </h4>
+      ${SWING_MODE_KEYS.map((key) =>
+        this._renderModeSelect({
+          label: localize(`devices.${key}`, l),
+          value: device[key],
+          emptyLabel: localize("devices.swing_mode_keep", l),
+          modes: swingModes,
+          format: String,
+          onPick: (value) => this._patchDevice(id, { [key]: value }),
+        }),
+      )}
+      <rs-list-row
+        switch
+        wrap
+        .heading=${localize("devices.heat_warmup_swing", l)}
+        .checked=${hasWarmupSwing}
+        @toggle-changed=${(e: CustomEvent<boolean>) =>
+          this._patchDevice(id, {
+            has_heat_warmup_swing: e.detail,
+            heat_warmup_swing_mode: device.heat_warmup_swing_mode || topMode,
+          })}
+      >
+        <rs-info-icon
+          slot="end"
+          .text=${localize("devices.heat_warmup_swing_info", l)}
+        ></rs-info-icon>
+      </rs-list-row>
+      ${
+        hasWarmupSwing
+          ? this._renderModeSelect({
+              label: localize("devices.heat_warmup_swing_mode", l),
+              value: device.heat_warmup_swing_mode || topMode,
+              modes: swingModes,
+              format: String,
+              onPick: (value) => this._patchDevice(id, { heat_warmup_swing_mode: value }),
+            })
+          : nothing
+      }
+    </div>`;
+  }
+
+  /** Both setpoints steer the room sensor's target, so they need one. */
+  private _renderAcSetpointGroup(device: DeviceConfig) {
+    const l = this.hass.language;
+    const id = device.entity_id;
+    const attributes = this.hass.states[id]?.attributes;
+    const hasCoolFloor = (device.setpoint_mode ?? "proportional") === "proportional";
+    const hasDryTarget = ((attributes?.hvac_modes ?? []) as string[]).includes("dry");
+    if (!hasCoolFloor && !hasDryTarget) return nothing;
+    const limit = (value: unknown, fallback: number) =>
+      typeof value === "number" ? toCelsius(value, this.hass) : fallback;
+    const setpointField = (key: "cool_setpoint_floor" | "dehumidify_target") =>
+      html`<rs-number-field
+        .hass=${this.hass}
+        kind="temperature"
+        allow-empty
+        .label=${localize(`devices.${key}`, l)}
+        .info=${localize(`devices.${key}_info`, l)}
+        .value=${device[key] ?? null}
+        .min=${limit(attributes?.min_temp, 16)}
+        .max=${limit(attributes?.max_temp, 30)}
+        @value-changed=${(e: CustomEvent<{ value: number | null }>) =>
+          this._patchDevice(id, { [key]: e.detail.value })}
+      ></rs-number-field>`;
+    return html`<div class="group">
+      <h4 class="group-title">${localize("devices.group_ac_setpoints", l)}</h4>
+      ${hasCoolFloor ? setpointField("cool_setpoint_floor") : nothing}
+      ${hasDryTarget ? setpointField("dehumidify_target") : nothing}
+    </div>`;
+  }
+
+  /** A select over the unit's own modes. `emptyLabel` adds a leading option for the stored "". */
+  private _renderModeSelect({
+    label,
+    info = "",
+    value,
+    emptyLabel,
+    modes,
+    format,
+    onPick,
+  }: ModeSelect) {
+    const options = [
+      ...(emptyLabel === undefined ? [] : [{ value: KEEP, label: emptyLabel }]),
+      ...modes.map((mode) => ({ value: mode, label: format(mode) })),
+    ];
+    return html`<rs-field .info=${info}>
+      <ha-select
+        .label=${label}
+        .value=${value || (emptyLabel === undefined ? "" : KEEP)}
+        .options=${options}
+        @selected=${(e: Event) => {
+          const picked = getSelectValue(e) ?? "";
+          onPick(picked === KEEP ? "" : picked);
+        }}
+        @closed=${(e: Event) => e.stopPropagation()}
+        fixedMenuPosition
+      >
+        ${options.map((option) => html`<ha-list-item value=${option.value}>${option.label}</ha-list-item>`)}
+      </ha-select>
+    </rs-field>`;
+  }
+
+  private _patchDevice(entityId: string, patch: Partial<DeviceConfig>): void {
+    this._fireDeviceChanged(
+      this.devices.map((device) =>
+        device.entity_id === entityId ? { ...device, ...patch } : device,
+      ),
+    );
+  }
+
   private _fanModeLabel(entityId: string, mode: string): string {
     return fanModeLabel(this.hass, mode, this.hass.states[entityId]);
   }
