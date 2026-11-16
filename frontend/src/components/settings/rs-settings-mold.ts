@@ -26,6 +26,9 @@ export class RsSettingsMold extends RsSettingsBase {
   @property({ type: Number }) public moldFRsi = 0.8;
   @property({ type: Number }) public moldSustainedMinutes = 30;
   @property({ type: Boolean }) public moldPreventionEnabled = false;
+  @property({ type: Boolean }) public dehumidifyEnabled = false;
+  @property({ type: Number }) public dehumidifyThreshold = 60;
+  @property({ type: Number }) public dehumidifyStopThreshold = 55;
   @property({ type: String }) public moldPreventionIntensity: "light" | "medium" | "strong" =
     "medium";
 
@@ -136,6 +139,43 @@ export class RsSettingsMold extends RsSettingsBase {
             `
           : nothing
       }
+
+      <div class="settings-section">
+        <rs-list-row
+          switch
+          wrap
+          .heading=${localize("mold.dehumidify", l)}
+          .secondary=${localize("mold.dehumidify_desc", l)}
+          .checked=${this.dehumidifyEnabled}
+          @toggle-changed=${(e: CustomEvent<boolean>) => this._fire("dehumidifyEnabled", e.detail)}
+        ></rs-list-row>
+        ${
+          this.dehumidifyEnabled
+            ? html`<div class="threshold-grid sub">
+                <rs-number-field
+                  .label=${localize("mold.dehumidify_threshold", l)}
+                  suffix="%"
+                  .hint=${localize("mold.dehumidify_threshold_hint", l)}
+                  .min=${30}
+                  .max=${95}
+                  .value=${this.dehumidifyThreshold}
+                  @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                    this._fire("dehumidifyThreshold", e.detail.value)}
+                ></rs-number-field>
+                <rs-number-field
+                  .label=${localize("mold.dehumidify_stop", l)}
+                  suffix="%"
+                  .hint=${localize("mold.dehumidify_stop_hint", l)}
+                  .min=${25}
+                  .max=${90}
+                  .value=${this.dehumidifyStopThreshold}
+                  @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                    this._fire("dehumidifyStopThreshold", e.detail.value)}
+                ></rs-number-field>
+              </div>`
+            : nothing
+        }
+      </div>
     `;
   }
 

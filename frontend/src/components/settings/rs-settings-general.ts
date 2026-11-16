@@ -13,6 +13,7 @@ export class RsSettingsGeneral extends RsSettingsBase {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public groupByFloor = false;
   @property({ type: Boolean }) public climateControlActive = true;
+  @property({ type: Boolean }) public heatingSeason = true;
 
   render() {
     const l = this.hass.language;
@@ -26,6 +27,16 @@ export class RsSettingsGeneral extends RsSettingsBase {
           .checked=${this.climateControlActive}
           @toggle-changed=${(e: CustomEvent<boolean>) =>
             this._fire("climateControlActive", e.detail)}
+        ></rs-list-row>
+      </div>
+      <div class="settings-section">
+        <rs-list-row
+          switch
+          wrap
+          .heading=${localize("settings.heating_season", l)}
+          .secondary=${localize("settings.heating_season_hint", l)}
+          .checked=${this.heatingSeason}
+          @toggle-changed=${(e: CustomEvent<boolean>) => this._fire("heatingSeason", e.detail)}
         ></rs-list-row>
       </div>
       ${
