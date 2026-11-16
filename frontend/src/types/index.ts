@@ -116,6 +116,16 @@ export interface DeviceConfig {
   valve_opening_entity?: string; // number entity for direct valve opening degree (0-100%)
   valve_closing_entity?: string; // number entity for direct valve closing degree (0-100%)
   valve_closing_mode?: "closing_degree" | "idle_opening"; // idle_opening: the second entity is the opening while idle (SONOFF TRV-ZBT)
+  active_fan_mode?: string; // ac: fan speed for fan_control "fixed" ("" = leave to the device)
+  fan_control?: "off" | "fixed" | "auto"; // ac: fan strategy while running, default "off"
+  fan_min_mode?: string; // ac: weakest speed for fan_control "auto" ("" = ladder min)
+  fan_max_mode?: string; // ac: strongest speed for fan_control "auto" ("" = ladder max)
+  heat_swing_mode?: string; // ac: louver while heating ("" = leave to the unit)
+  cool_swing_mode?: string; // ac: louver while cooling ("" = leave to the unit)
+  has_heat_warmup_swing?: boolean; // ac: hold heat_warmup_swing_mode during the initial heating warm-up
+  heat_warmup_swing_mode?: string; // ac: warm-up louver position
+  cool_setpoint_floor?: number | null; // ac: warmest cooling setpoint at min airflow, °C (null = device min)
+  dehumidify_target?: number | null; // ac: dry-mode setpoint, °C (null = the room's cool target)
 }
 
 export type ConflictResolution =
