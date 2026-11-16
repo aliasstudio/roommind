@@ -1,270 +1,168 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { HeatSourcePrimary, HomeAssistant } from "../types";
+import type { ClimateMode, HomeAssistant } from "../types";
 import { localize } from "../utils/localize";
-import { inputStyles } from "../styles/input-styles";
+import { tokens } from "../styles/tokens";
+import { formStyles } from "../styles/form-styles";
+import { formatNumber } from "../utils/format";
+import { formatTempLocale, tempUnit, toDisplayDelta } from "../utils/temperature";
+import "./shared/rs-number-field";
+import "./shared/rs-info-icon";
+import "./shared/rs-list-row";
+
+/** Mirrors HEAT_SOURCE_HYSTERESIS / HEAT_SOURCE_LARGE_GAP_MULTIPLIER (const.py). */
+const HYSTERESIS_K = 0.3;
+const BOTH_MULTIPLIER = 2;
 
 @customElement("rs-heat-source-section")
 export class RsHeatSourceSection extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public enabled = false;
-  @property({ type: String }) public primarySource: HeatSourcePrimary = "trv";
   @property({ type: Number }) public primaryDelta = 1.5;
   @property({ type: Number }) public outdoorThreshold = 5.0;
   @property({ type: Number }) public acMinOutdoor = -15.0;
-  @property({ type: Number }) public assistPercent = 0;
   @property({ type: Boolean }) public editing = false;
+  @property({ type: Boolean }) public priceAware = false;
+  /** A price source is set in the settings; without one the option is hidden. */
+  @property({ type: Boolean }) public priceConfigured = false;
+  /**
+   * Current outdoor temperature; null = none, then the gap decides between the sources.
+   * Undefined (not passed) reads as known.
+   */
+  @property({ attribute: false }) public outdoorTemp: number | null | undefined = undefined;
+  @property({ type: String }) public climateMode: ClimateMode = "auto";
 
   static styles = [
-    inputStyles,
+    tokens,
+    formStyles,
     css`
       :host {
         display: block;
-      }
-
-      /* Read-only summary (tile) */
-      .summary {
-        padding: 0 16px 16px;
-        font-size: 13px;
-        color: var(--secondary-text-color);
-        line-height: 1.6;
-      }
-
-      .summary.disabled {
-        font-style: italic;
-        opacity: 0.75;
-      }
-
-      /* Editing layout */
-      .feature-card {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 14px 16px;
-        border: 1px solid var(--divider-color);
-        border-radius: 12px;
-        background: var(--card-background-color);
-        transition:
-          border-color 0.2s ease,
-          background 0.2s ease;
-      }
-
-      .feature-card.enabled {
-        border-color: rgba(3, 169, 244, 0.4);
-        background: rgba(3, 169, 244, 0.06);
-      }
-
-      .feature-text {
-        flex: 1;
-        min-width: 0;
-      }
-
-      .feature-title {
-        font-size: 14px;
-        font-weight: 500;
-        margin: 0 0 4px;
-      }
-
-      .feature-description {
-        font-size: 12px;
-        color: var(--secondary-text-color);
-        line-height: 1.5;
-        margin: 0;
-      }
-
-      ha-switch {
-        flex-shrink: 0;
-      }
-
-      .thresholds {
-        margin-top: 16px;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .threshold-row {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        padding: 16px 0;
-        border-top: 1px solid var(--divider-color);
-      }
-
-      .threshold-row:first-child {
-        border-top: none;
-        padding-top: 0;
-      }
-
-      .threshold-label {
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--primary-text-color);
-      }
-
-      .threshold-hint {
-        font-size: 13px;
-        color: var(--secondary-text-color);
-        line-height: 1.4;
-      }
-
-      .threshold-row ha-textfield {
-        width: 100%;
-        max-width: 220px;
-      }
-
-      .threshold-row ha-select {
-        width: 100%;
-        max-width: 320px;
+        --rs-form-inline: var(--rs-space-4);
       }
     `,
   ];
 
+  private _abs(c: number): string {
+    return `${formatTempLocale(c, this.hass, 0, 1)}\u00a0${tempUnit(this.hass)}`;
+  }
+
+  private _delta(k: number): string {
+    return `${formatNumber(toDisplayDelta(k, this.hass), this.hass, 0, 1)}\u00a0${tempUnit(this.hass)}`;
+  }
+
+  /** What decides the source now, in one line. */
+  private _ruleText(): string {
+    const l = this.hass.language;
+    if (!this.enabled) {
+      return localize(
+        this.climateMode === "heat_only"
+          ? "heat_source.summary_disabled_heat_only"
+          : "heat_source.summary_disabled",
+        l,
+      );
+    }
+    const rule =
+      this.outdoorTemp !== null
+        ? localize("heat_source.rule_outdoor", l, { temp: this._abs(this.outdoorThreshold) })
+        : localize("heat_source.rule_gap", l, { delta: this._delta(this.primaryDelta) });
+    return this.priceConfigured && this.priceAware
+      ? `${localize("heat_source.price_aware_summary", l)} · ${rule}`
+      : rule;
+  }
+
   render() {
-    const lang = this.hass.language;
+    const l = this.hass.language;
 
     if (!this.editing) {
-      if (!this.enabled) {
-        return html`<div class="summary disabled">
-          ${localize("heat_source.summary_disabled", lang)}
-        </div>`;
-      }
-      return html`<div class="summary">
-        ${localize(`heat_source.primary_${this.primarySource}`, lang)} ·
-        ${localize("heat_source.primary_delta", lang)}:
-        <strong>${this.primaryDelta}${localize("heat_source.primary_delta_suffix", lang)}</strong>
-        · ${localize("heat_source.outdoor_threshold", lang)}:
-        <strong
-          >${this.outdoorThreshold}${localize("heat_source.outdoor_threshold_suffix", lang)}</strong
+      return html`<rs-list-row
+        clickable
+        chevron
+        icon="mdi:swap-horizontal"
+        .heading=${localize("heat_source.toggle", l)}
+        .secondary=${this._ruleText()}
+        .value=${localize(this.enabled ? "detail.on" : "detail.off", l)}
+        @row-click=${this._fireEdit}
+      ></rs-list-row>`;
+    }
+
+    const both = this.primaryDelta * BOTH_MULTIPLIER + HYSTERESIS_K;
+    return html`
+      <div class="group">
+        <rs-list-row
+          switch
+          wrap
+          .heading=${localize("heat_source.toggle", l)}
+          .secondary=${this._ruleText()}
+          .checked=${this.enabled}
+          @toggle-changed=${(e: CustomEvent<boolean>) =>
+            this._emit("heat_source_orchestration", e.detail)}
         >
-        · ${localize("heat_source.ac_min_outdoor", lang)}:
-        <strong>${this.acMinOutdoor}${localize("heat_source.ac_min_outdoor_suffix", lang)}</strong>
-        · ${localize("heat_source.assist_percent", lang)}:
-        <strong>${this.assistPercent}${localize("heat_source.assist_percent_suffix", lang)}</strong>
-      </div>`;
-    }
-
-    return html`
-      <div class="feature-card ${this.enabled ? "enabled" : ""}">
-        <div class="feature-text">
-          <div class="feature-title">${localize("heat_source.toggle", lang)}</div>
-          <div class="feature-description">${localize("heat_source.toggle_hint", lang)}</div>
-        </div>
-        <ha-switch .checked=${this.enabled} @change=${this._onSwitchChange}></ha-switch>
+          <rs-info-icon slot="end" .text=${localize("heat_source.toggle_hint", l)}></rs-info-icon>
+        </rs-list-row>
       </div>
-
-      ${this.enabled
-        ? html`
-            <div class="thresholds">
-              <div class="threshold-row">
-                <span class="threshold-label">${localize("heat_source.primary", lang)}</span>
-                <span class="threshold-hint">${localize("heat_source.primary_hint", lang)}</span>
-                <ha-select
-                  .value=${this.primarySource}
-                  .options=${[
-                    { value: "trv", label: localize("heat_source.primary_trv", lang) },
-                    { value: "ac", label: localize("heat_source.primary_ac", lang) },
-                  ]}
-                  @selected=${this._onPrimarySourceChange}
-                  @closed=${(e: Event) => e.stopPropagation()}
-                  fixedMenuPosition
-                >
-                  <ha-list-item value="trv"
-                    >${localize("heat_source.primary_trv", lang)}</ha-list-item
-                  >
-                  <ha-list-item value="ac"
-                    >${localize("heat_source.primary_ac", lang)}</ha-list-item
-                  >
-                </ha-select>
-              </div>
-              ${this._renderThresholdRow({
-                label: localize("heat_source.primary_delta", lang),
-                hint: localize("heat_source.primary_delta_hint", lang),
-                suffix: localize("heat_source.primary_delta_suffix", lang),
-                value: this.primaryDelta,
-                min: 0.5,
-                max: 5.0,
-                step: 0.1,
-                key: "heat_source_primary_delta",
-              })}
-              ${this._renderThresholdRow({
-                label: localize("heat_source.outdoor_threshold", lang),
-                hint: localize("heat_source.outdoor_threshold_hint", lang),
-                suffix: localize("heat_source.outdoor_threshold_suffix", lang),
-                value: this.outdoorThreshold,
-                min: -20,
-                max: 25,
-                step: 1,
-                key: "heat_source_outdoor_threshold",
-              })}
-              ${this._renderThresholdRow({
-                label: localize("heat_source.ac_min_outdoor", lang),
-                hint: localize("heat_source.ac_min_outdoor_hint", lang),
-                suffix: localize("heat_source.ac_min_outdoor_suffix", lang),
-                value: this.acMinOutdoor,
-                min: -30,
-                max: 5,
-                step: 1,
-                key: "heat_source_ac_min_outdoor",
-              })}
-              ${this._renderThresholdRow({
-                label: localize("heat_source.assist_percent", lang),
-                hint: localize("heat_source.assist_percent_hint", lang),
-                suffix: localize("heat_source.assist_percent_suffix", lang),
-                value: this.assistPercent,
-                min: 0,
-                max: 100,
-                step: 5,
-                key: "heat_source_assist_percent",
-              })}
-            </div>
-          `
-        : nothing}
+      ${
+        this.enabled
+          ? html`<div class="group">
+              <h4 class="group-title">${localize("heat_source.group_rules", l)}</h4>
+              <rs-number-field
+                .hass=${this.hass}
+                kind="temperature"
+                .label=${localize("heat_source.outdoor_threshold", l)}
+                .info=${localize("heat_source.outdoor_threshold_hint", l)}
+                .value=${this.outdoorThreshold}
+                .min=${-20}
+                .max=${25}
+                .step=${1}
+                @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                  this._emit("heat_source_outdoor_threshold", e.detail.value)}
+              ></rs-number-field>
+              <rs-number-field
+                .hass=${this.hass}
+                kind="temperature-delta"
+                .label=${localize("heat_source.primary_delta", l)}
+                .info=${localize("heat_source.primary_delta_hint", l)}
+                .hint=${localize("heat_source.both_from", l, { delta: this._delta(both) })}
+                .value=${this.primaryDelta}
+                .min=${0.5}
+                .max=${5.0}
+                .step=${0.1}
+                @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                  this._emit("heat_source_primary_delta", e.detail.value)}
+              ></rs-number-field>
+              <rs-number-field
+                .hass=${this.hass}
+                kind="temperature"
+                .label=${localize("heat_source.ac_min_outdoor", l)}
+                .info=${localize("heat_source.ac_min_outdoor_hint", l)}
+                .value=${this.acMinOutdoor}
+                .min=${-30}
+                .max=${5}
+                .step=${1}
+                @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                  this._emit("heat_source_ac_min_outdoor", e.detail.value)}
+              ></rs-number-field>
+              ${
+                this.priceConfigured
+                  ? html`<rs-list-row
+                      switch
+                      wrap
+                      .heading=${localize("heat_source.price_aware", l)}
+                      .checked=${this.priceAware}
+                      @toggle-changed=${(e: CustomEvent<boolean>) =>
+                        this._emit("heat_source_price_aware", e.detail)}
+                    >
+                      <rs-info-icon
+                        slot="end"
+                        .text=${localize("heat_source.price_aware_hint", l)}
+                      ></rs-info-icon>
+                    </rs-list-row>`
+                  : nothing
+              }
+            </div>`
+          : nothing
+      }
     `;
-  }
-
-  private _renderThresholdRow(opts: {
-    label: string;
-    hint: string;
-    suffix: string;
-    value: number;
-    min: number;
-    max: number;
-    step: number;
-    key: string;
-  }) {
-    return html`
-      <div class="threshold-row">
-        <span class="threshold-label">${opts.label}</span>
-        <span class="threshold-hint">${opts.hint}</span>
-        <ha-textfield
-          .value=${String(opts.value)}
-          .min=${String(opts.min)}
-          .max=${String(opts.max)}
-          .step=${String(opts.step)}
-          .suffix=${opts.suffix}
-          type="number"
-          @input=${(e: Event) => this._onNumberInput(opts.key, e)}
-        ></ha-textfield>
-      </div>
-    `;
-  }
-
-  private _onPrimarySourceChange(e: Event) {
-    const value = (e.target as HTMLSelectElement).value;
-    if (value && value !== this.primarySource) {
-      this._emit("heat_source_primary", value);
-    }
-  }
-
-  private _onSwitchChange(e: Event) {
-    this._emit("heat_source_orchestration", (e.target as HTMLInputElement).checked);
-  }
-
-  private _onNumberInput(key: string, e: Event) {
-    const val = parseFloat((e.target as HTMLInputElement).value);
-    if (!isNaN(val)) {
-      this._emit(key, val);
-    }
   }
 
   private _emit(key: string, value: unknown) {
@@ -275,6 +173,11 @@ export class RsHeatSourceSection extends LitElement {
         composed: true,
       }),
     );
+  }
+
+  private _fireEdit(e: Event) {
+    e.stopPropagation();
+    this.dispatchEvent(new CustomEvent("edit-click", { bubbles: true, composed: true }));
   }
 }
 

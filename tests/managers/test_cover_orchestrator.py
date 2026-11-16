@@ -17,6 +17,7 @@ from custom_components.roommind.const import (
     COVER_PREDICTION_DT_MINUTES,
     COVER_SMOOTHING_MINUTES,
     COVER_SMOOTHING_RISE_MINUTES,
+    MAX_SENSOR_STALENESS,
     MODE_COOLING,
     MODE_HEATING,
     MODE_IDLE,
@@ -675,6 +676,136 @@ class TestAsyncProcess:
         call_kwargs = cm.evaluate.call_args
         assert call_kwargs[1]["forced_position"] == 25 or call_kwargs.kwargs["forced_position"] == 25
 
+    @pytest.mark.parametrize(
+        ("states", "schedules", "selector", "unknown"),
+        [
+            ({}, [{"entity_id": "schedule.c"}], "", True),
+            ({"schedule.c": "unavailable"}, [{"entity_id": "schedule.c"}], "", True),
+            ({"schedule.c": "off"}, [{"entity_id": "schedule.c"}], "", False),
+            ({}, [{"entity_id": "schedule.c", "mode": "gate"}], "", False),
+            ({"schedule.c": "off"}, [{"entity_id": "schedule.c"}], "input_boolean.sel", True),
+            (
+                {"schedule.c": "off", "input_boolean.sel": "off"},
+                [{"entity_id": "schedule.c"}],
+                "input_boolean.sel",
+                False,
+            ),
+            ({"schedule.c": "off"}, [{"entity_id": "schedule.c", "mode": "gate"}], "input_boolean.sel", False),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_unreadable_force_schedule_is_reported(self, states, schedules, selector, unknown):
+        """A force schedule or selector without a state yet (start) is passed on as unknown, a gate schedule is not."""
+        hass = _make_hass()
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(hass, cm, _make_model_manager())
+
+        def _get(eid):
+            if eid not in states:
+                return None
+            s = MagicMock()
+            s.state = states[eid]
+            s.attributes = {}
+            return s
+
+        hass.states.get = MagicMock(side_effect=_get)
+        room = _make_room(covers=["cover.blind1"], cover_schedules=schedules, cover_schedule_selector_entity=selector)
+
+        await orch.async_process(
+            area_id="living_room",
+            room=room,
+            targets=TargetTemps(heat=21.0, cool=24.0),
+            mode=MODE_HEATING,
+            current_temp=20.0,
+            outdoor_temp=15.0,
+            q_solar=0.3,
+            predicted_peak_temp=22.0,
+            has_override=False,
+        )
+
+        assert cm.evaluate.call_args.kwargs["forced_unknown"] is unknown
+
+    @pytest.mark.parametrize(
+        ("running", "registered", "elapsed", "unknown"),
+        [
+            (False, False, 10_000.0, True),  # HA still starting: the helper may just not be loaded yet
+            (True, False, 0.0, False),  # running, no state and no registry entry: deleted, not "not yet"
+            (True, True, 0.0, True),  # running, registered but no state yet
+            (True, True, MAX_SENSOR_STALENESS - 1, True),
+            (True, True, MAX_SENSOR_STALENESS + 1, False),  # unreadable for good once HA ran a while
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_missing_force_schedule_counts_as_unknown_only_while_it_may_still_load(
+        self, running, registered, elapsed, unknown
+    ):
+        """A deleted helper (or one stuck unreadable) must not keep the start-inside-a-forced-phase flag (#499)."""
+        from homeassistant.core import CoreState
+
+        hass = _make_hass()
+        hass.state = CoreState.running if running else CoreState.starting
+        registry = MagicMock()
+        registry.async_get = MagicMock(return_value=MagicMock() if registered else None)
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(hass, cm, _make_model_manager())
+        room = _make_room(covers=["cover.blind1"], cover_schedules=[{"entity_id": "schedule.gone"}])
+
+        async def _cycle(now: float) -> bool:
+            with (
+                patch("custom_components.roommind.managers.cover_orchestrator.er.async_get", return_value=registry),
+                patch("custom_components.roommind.managers.cover_orchestrator.time.monotonic", return_value=now),
+            ):
+                await orch.async_process(
+                    area_id="living_room",
+                    room=room,
+                    targets=TargetTemps(heat=21.0, cool=24.0),
+                    mode=MODE_HEATING,
+                    current_temp=20.0,
+                    outdoor_temp=15.0,
+                    q_solar=0.3,
+                    predicted_peak_temp=22.0,
+                    has_override=False,
+                )
+            return cm.evaluate.call_args.kwargs["forced_unknown"]
+
+        await _cycle(1_000.0)
+        assert await _cycle(1_000.0 + elapsed) is unknown
+
+    @pytest.mark.asyncio
+    async def test_selector_still_loading_is_not_cleared_by_a_deleted_helper(self):
+        """Selector registered but without state yet, the helper it points at deleted: still unknown."""
+        from homeassistant.core import CoreState
+
+        hass = _make_hass()
+        hass.state = CoreState.running
+        registry = MagicMock()
+        registry.async_get = MagicMock(side_effect=lambda eid: MagicMock() if eid == "input_boolean.sel" else None)
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(hass, cm, _make_model_manager())
+        room = _make_room(
+            covers=["cover.blind1"],
+            cover_schedules=[{"entity_id": "schedule.gone"}, {"entity_id": "schedule.other"}],
+            cover_schedule_selector_entity="input_boolean.sel",
+        )
+
+        with (
+            patch("custom_components.roommind.managers.cover_orchestrator.er.async_get", return_value=registry),
+            patch("custom_components.roommind.managers.cover_orchestrator.resolve_schedule_index", return_value=0),
+        ):
+            await orch.async_process(
+                area_id="living_room",
+                room=room,
+                targets=TargetTemps(heat=21.0, cool=24.0),
+                mode=MODE_HEATING,
+                current_temp=20.0,
+                outdoor_temp=15.0,
+                q_solar=0.3,
+                predicted_peak_temp=22.0,
+                has_override=False,
+            )
+
+        assert cm.evaluate.call_args.kwargs["forced_unknown"] is True
+
     @pytest.mark.asyncio
     async def test_night_close_forced(self):
         """Night close forces position when solar elevation <= 0."""
@@ -1297,8 +1428,9 @@ class TestOutdoorMinTempGate:
         assert call_kwargs["predicted_peak_temp"] == 26.0
 
     @pytest.mark.asyncio
-    async def test_outdoor_min_temp_none_disables_gate(self):
-        """covers_outdoor_min_temp=None means the gate is disabled."""
+    @pytest.mark.parametrize(("outdoor", "gated"), [(5.0, True), (12.0, False)])
+    async def test_outdoor_min_temp_none_uses_the_default(self, outdoor, gated):
+        """None (rooms stored up to 1.8.2) gates at the 10 °C the room page shows."""
         cm = _make_cover_manager()
         cm.evaluate.return_value = CoverDecision(target_position=100, changed=False, reason="test")
         orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
@@ -1311,14 +1443,15 @@ class TestOutdoorMinTempGate:
                 targets=TargetTemps(heat=21.0, cool=24.0),
                 mode=MODE_HEATING,
                 current_temp=22.0,  # above heat target: no heating gate
-                outdoor_temp=5.0,
+                outdoor_temp=outdoor,
                 q_solar=0.8,
                 predicted_peak_temp=None,
                 has_override=False,
             )
 
         call_kwargs = cm.evaluate.call_args[1]
-        assert call_kwargs["predicted_peak_temp"] == 26.0
+        expected = call_kwargs["target_temp"] if gated else 26.0
+        assert call_kwargs["predicted_peak_temp"] == expected
 
 
 # ── Night close elevation + offset tests ─────────────────────────────
@@ -1431,7 +1564,7 @@ class TestPerCoverMinPositionCorrection:
         cm.evaluate.return_value = CoverDecision(target_position=10, changed=True, reason="deploy")
         hass = _make_hass()
         positional_state = MagicMock()
-        positional_state.attributes = {"supported_features": 15}
+        positional_state.attributes = {"supported_features": 15, "current_position": 100}
         hass.states.get = MagicMock(return_value=positional_state)
         orch = CoverOrchestrator(hass, cm, _make_model_manager())
         room = _make_room(
@@ -1463,7 +1596,7 @@ class TestPerCoverMinPositionCorrection:
         cm.evaluate.return_value = CoverDecision(target_position=10, changed=True, reason="deploy")
         hass = _make_hass()
         positional_state = MagicMock()
-        positional_state.attributes = {"supported_features": 15}
+        positional_state.attributes = {"supported_features": 15, "current_position": 100}
         hass.states.get = MagicMock(return_value=positional_state)
         orch = CoverOrchestrator(hass, cm, _make_model_manager())
         room = _make_room(covers=["cover.a"])
@@ -1561,6 +1694,7 @@ class TestBinaryCoverExpectedPosition:
         cm = _make_cover_manager()
         cm.evaluate.return_value = CoverDecision(target_position=39, changed=True, reason="deploy")
         binary_state = MagicMock()
+        binary_state.state = "open"
         binary_state.attributes = {"supported_features": 3}
         hass.states.get = MagicMock(return_value=binary_state)
         orch = CoverOrchestrator(hass, cm, _make_model_manager())
@@ -1587,8 +1721,9 @@ class TestBinaryCoverExpectedPosition:
         cm = _make_cover_manager()
         cm.evaluate.return_value = CoverDecision(target_position=39, changed=True, reason="deploy")
         positional = MagicMock()
-        positional.attributes = {"supported_features": 15}
+        positional.attributes = {"supported_features": 15, "current_position": 100}
         binary = MagicMock()
+        binary.state = "open"
         binary.attributes = {"supported_features": 3}
         hass.states.get = MagicMock(side_effect=lambda eid: positional if eid == "cover.pos" else binary)
         orch = CoverOrchestrator(hass, cm, _make_model_manager())
@@ -1637,6 +1772,7 @@ class TestBinaryCoverExpectedPosition:
         cm = _make_cover_manager()
         cm.evaluate.return_value = CoverDecision(target_position=100, changed=True, reason="low_solar")
         binary_state = MagicMock()
+        binary_state.state = "open"
         binary_state.attributes = {"supported_features": 3}
         hass.states.get = MagicMock(return_value=binary_state)
         orch = CoverOrchestrator(hass, cm, _make_model_manager())
@@ -2365,3 +2501,153 @@ class TestWindowHold:
 
         assert result.decision.changed is True
         assert result.decision.target_position < 100
+
+
+class TestForcedPositionWithCoverMinimum:
+    """A forced position a cover's own minimum keeps it from reaching goes out once, not every cycle."""
+
+    def _setup(self, states: dict, **room_kw):
+        from custom_components.roommind.managers.cover_manager import CoverManager
+
+        hass = _make_hass()
+        hass.states.get = MagicMock(side_effect=states.get)
+        hass.services.async_call = AsyncMock()
+        orch = CoverOrchestrator(hass, CoverManager(), _make_model_manager())
+        room = _make_room(**{"covers": list(states), "covers_night_close": True, "covers_night_position": 0, **room_kw})
+        return hass, orch, room
+
+    async def _night_cycles(self, hass, orch, room, states: dict, settled: dict) -> list[int]:
+        """Three night cycles; after each the covers report *settled*. Returns service calls per cycle."""
+        sent = []
+        for _ in range(3):
+            orch.read_positions("living_room", room)
+            hass.services.async_call.reset_mock()
+            await _process_night(orch, room, window_open=False)
+            sent.append(hass.services.async_call.call_count)
+            states.update(settled)
+        return sent
+
+    @pytest.mark.asyncio
+    async def test_single_cover_with_minimum_is_sent_once(self):
+        states = {"cover.a": _position_cover(100)}
+        hass, orch, room = self._setup(states, cover_min_positions={"cover.a": 30})
+
+        sent = await self._night_cycles(hass, orch, room, states, {"cover.a": _position_cover(30)})
+
+        assert sent == [1, 0, 0]
+
+    @pytest.mark.asyncio
+    async def test_mixed_minimums_are_sent_once(self):
+        states = {"cover.a": _position_cover(100), "cover.b": _position_cover(100)}
+        hass, orch, room = self._setup(states, cover_min_positions={"cover.a": 30})
+
+        sent = await self._night_cycles(
+            hass, orch, room, states, {"cover.a": _position_cover(30), "cover.b": _position_cover(0)}
+        )
+
+        assert sent[0] >= 1
+        assert sent[1:] == [0, 0]
+
+    @pytest.mark.asyncio
+    async def test_binary_cover_next_to_a_minimum_is_sent_once(self):
+        states = {"cover.a": _position_cover(100), "cover.b": _binary_cover("open")}
+        hass, orch, room = self._setup(states, cover_min_positions={"cover.a": 30}, covers_night_position=50)
+
+        sent = await self._night_cycles(
+            hass, orch, room, states, {"cover.a": _position_cover(50), "cover.b": _binary_cover("closed")}
+        )
+
+        assert sent[0] >= 1
+        assert sent[1:] == [0, 0]
+
+    @pytest.mark.asyncio
+    async def test_unreadable_cover_does_not_count_for_the_expected_position(self):
+        """A cover the reading skips (unavailable, no position) must not count in the comparison either."""
+        unavailable = MagicMock()
+        unavailable.state = "unavailable"
+        unavailable.attributes = {"supported_features": 3}
+        states = {"cover.a": _position_cover(30), "cover.b": unavailable}
+        hass, orch, room = self._setup(states, covers_night_position=30)
+
+        sent = await self._night_cycles(hass, orch, room, states, {})
+
+        assert sent == [0, 0, 0]
+
+    @pytest.mark.asyncio
+    async def test_cover_not_yet_at_its_minimum_is_sent(self):
+        """Clamping only widens 'at target' to where the cover can go; a cover elsewhere still moves."""
+        states = {"cover.a": _position_cover(60)}
+        hass, orch, room = self._setup(states, cover_min_positions={"cover.a": 30})
+
+        sent = await self._night_cycles(hass, orch, room, states, {"cover.a": _position_cover(60)})
+
+        assert sent[0] == 1
+
+
+class TestDeletedForceSchedule:
+    """A force helper deleted but still listed must not make a hand-closed cover RoomMind's (#499)."""
+
+    @pytest.mark.asyncio
+    async def test_cover_closed_by_hand_stays_closed_in_the_morning(self):
+        from homeassistant.core import CoreState
+
+        from custom_components.roommind.managers.cover_manager import CoverManager
+
+        states: dict[str, tuple[str, dict]] = {}
+
+        def _get(eid):
+            if eid not in states:
+                return None
+            s = MagicMock()
+            s.state, s.attributes = states[eid]
+            return s
+
+        def _cover(position: int) -> None:
+            states["cover.blind1"] = (
+                "open" if position > 0 else "closed",
+                {"current_position": position, "supported_features": 15},
+            )
+
+        hass = _make_hass()
+        hass.state = CoreState.running
+        hass.states.get = MagicMock(side_effect=_get)
+        hass.services.async_call = AsyncMock()
+        registry = MagicMock()
+        registry.async_get = MagicMock(return_value=None)
+        orch = CoverOrchestrator(hass, CoverManager(), _make_model_manager())
+        room = _make_room(
+            covers=["cover.blind1"],
+            covers_night_close=True,
+            cover_schedules=[{"entity_id": "schedule.gone"}],
+            climate_mode="heat_only",
+        )
+
+        async def _cycle(now: float, elevation: float):
+            with (
+                patch("custom_components.roommind.managers.cover_orchestrator.er.async_get", return_value=registry),
+                patch("custom_components.roommind.managers.cover_orchestrator.time.time", return_value=now),
+                patch("custom_components.roommind.managers.cover_manager.time.time", return_value=now),
+                patch("custom_components.roommind.managers.cover_orchestrator.solar_elevation", return_value=elevation),
+            ):
+                orch.read_positions("living_room", room)
+                result = await orch.async_process(
+                    area_id="living_room",
+                    room=room,
+                    targets=TargetTemps(heat=21.0, cool=None),
+                    mode=MODE_IDLE,
+                    current_temp=21.5,
+                    outdoor_temp=15.0,
+                    q_solar=0.0,
+                    predicted_peak_temp=21.5,
+                    has_override=False,
+                )
+            return result.decision
+
+        _cover(100)
+        await _cycle(1_000.0, 30.0)  # daytime start, cover open
+        _cover(0)  # closed by hand in the afternoon
+        await _cycle(2_000.0, 10.0)
+        await _cycle(20_000.0, -5.0)  # sunset: night close finds it in place
+        morning = await _cycle(60_000.0, 10.0)
+
+        assert not morning.changed

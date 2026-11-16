@@ -437,3 +437,32 @@ class TestRoomClimateEntity:
         store.async_update_room.assert_awaited_once_with("living_room", {"climate_control_enabled": False})
         assert coordinator._rooms_to_switch_off == {"living_room"}
         coordinator.async_request_refresh.assert_awaited_once()
+
+
+def test_cleanup_removes_leftover_residual_heat_switches(hass, mock_config_entry):
+    """The per-room residual heat switch is gone: entities a pre-release build created are orphaned."""
+    from custom_components.roommind.const import DOMAIN
+
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    store = MagicMock()
+    store.get_rooms.return_value = {
+        "living_room": {"heating_system_type": "radiator"},
+        "bathroom": {"heating_system_type": "underfloor"},
+    }
+    hass.data = {DOMAIN: {"store": store}}
+
+    entries = []
+    for area in ("living_room", "bathroom"):
+        e = MagicMock()
+        e.platform = DOMAIN
+        e.unique_id = f"{DOMAIN}_{area}_residual_heat"
+        e.entity_id = f"switch.roommind_{area}_residual_heat"
+        entries.append(e)
+    mock_registry = MagicMock()
+    mock_registry.entities.values.return_value = entries
+
+    with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+        coordinator.cleanup_orphaned_entities()
+
+    removed_ids = [c.args[0] for c in mock_registry.async_remove.call_args_list]
+    assert removed_ids == ["switch.roommind_living_room_residual_heat", "switch.roommind_bathroom_residual_heat"]

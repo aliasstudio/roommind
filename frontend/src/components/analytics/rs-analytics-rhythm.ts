@@ -6,25 +6,21 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AnalyticsRhythm, HomeAssistant, RhythmDay } from "../../types";
 import { localize } from "../../utils/localize";
-import { tempUnit, toDisplay, toDisplayDelta } from "../../utils/temperature";
-import "../shared/rs-chip-group";
+import { formatTempLocale, tempUnit } from "../../utils/temperature";
+import { formatHours, formatPercent } from "../../utils/format";
+import { tokens, srOnly } from "../../styles/tokens";
+import { floatingStyles } from "../../styles/floating-styles";
+import { formatIsoDay, haTimeZone, isoDateInZone } from "../../utils/analytics-time";
+import "../shared/rs-list-card";
+import "../shared/rs-segmented";
 
 type RhythmView = "activity" | "comfort";
 
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const AXIS_HOURS = [0, 6, 12, 18];
-// Darkest colour at this distance from the target; a cell inside the dead zone reads as on target
-const DEVIATION_FULL_K = 2;
-const DEVIATION_DEAD_ZONE_K = 0.25;
 const POPUP_WIDTH = 190;
 // Sticky toolbars plus the popup itself; closer to the top it opens below the cell
 const POPUP_MIN_TOP = 300;
-
-const isoDate = (ms: number) => {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 
 const shade = (variable: string, share: number) =>
   `color-mix(in srgb, var(${variable}) ${Math.round(30 + 70 * Math.sqrt(share))}%, var(--rs-idle))`;
@@ -36,8 +32,19 @@ export class RsAnalyticsRhythm extends LitElement {
   @property({ type: Number }) public rangeStart = 0;
   @property({ type: Number }) public rangeEnd = 0;
   @property({ type: String }) public language = "en";
+  /** Same flags as the summary: the legend names only what the room can do or did. */
+  @property({ type: Boolean }) public canHeat = true;
+  @property({ type: Boolean }) public canCool = false;
+  @property({ type: Boolean }) public hasWindowSensor = false;
+  /** Sides the room is judged on: one-sided rooms can only miss on their own side. */
+  @property({ type: String }) public bandSides: "both" | "heat" | "cool" = "both";
+
+  private readonly _touch = matchMedia("(pointer: coarse)").matches;
 
   @state() private _view: RhythmView = "activity";
+  // Touch keeps the popup open and offers the day in it; a mouse picks the day by clicking
+  @state() private _tapped = false;
+  private _popupPressed = false;
   @state() private _selected: {
     row: number;
     hour: number;
@@ -47,7 +54,9 @@ export class RsAnalyticsRhythm extends LitElement {
   } | null = null;
 
   private _closeOnOutside = (e: Event) => {
-    if (!e.composedPath().includes(this)) this._selected = null;
+    if (e.composedPath().includes(this)) return;
+    this._popupPressed = false;
+    this._selected = null;
   };
 
   connectedCallback() {
@@ -64,35 +73,30 @@ export class RsAnalyticsRhythm extends LitElement {
     const days = this.rhythm?.days;
     if (!days?.length) return nothing;
     const l = this.language;
-    const hasComfort = days.some((d) => d.deviation.some((v) => v != null));
+    const hasComfort = days.some((d) => d.within != null);
     const view = hasComfort ? this._view : "activity";
     return html`
-      <ha-card>
-        <div class="header">
-          <div>
-            <div class="title">${localize("analytics.rhythm", l)}</div>
-            <div class="subtitle">
-              ${this._formatDay(days[days.length - 1].date, { day: "numeric", month: "short" })} –
-              ${this._formatDay(days[0].date, { day: "numeric", month: "short" })}
-            </div>
-          </div>
-          ${hasComfort
-            ? html`<rs-chip-group
-                .chips=${[
-                  {
-                    id: "activity",
-                    label: localize("analytics.rhythm_activity", l),
-                    active: view === "activity",
-                  },
-                  {
-                    id: "comfort",
-                    label: localize("analytics.rhythm_comfort", l),
-                    active: view === "comfort",
-                  },
-                ]}
-                @chip-clicked=${this._onChip}
-              ></rs-chip-group>`
-            : nothing}
+      <rs-list-card unclipped .heading=${localize("analytics.rhythm", l)}>
+        <div class="bar">
+          <span class="period"
+            >${this._formatDay(days[days.length - 1].date, { day: "numeric", month: "short" })} –
+            ${this._formatDay(days[0].date, { day: "numeric", month: "short" })}</span
+          >
+          ${
+            hasComfort
+              ? html`<rs-segmented
+                  size="sm"
+                  wrap
+                  .label=${localize("analytics.rhythm_view", l)}
+                  .options=${[
+                    { value: "activity", label: localize("analytics.rhythm_activity", l) },
+                    { value: "comfort", label: localize("analytics.rhythm_comfort", l) },
+                  ]}
+                  .value=${view}
+                  @value-changed=${this._onView}
+                ></rs-segmented>`
+              : nothing
+          }
         </div>
         <div class="grid-wrap">
           <div
@@ -105,7 +109,8 @@ export class RsAnalyticsRhythm extends LitElement {
             @pointerleave=${this._onPointerLeave}
             @keydown=${(e: KeyboardEvent) => this._onKey(e, days.length)}
             @blur=${() => {
-              this._selected = null;
+              // Tapping the popup's button blurs the grid first; the popup must outlive that
+              if (!this._popupPressed) this._selected = null;
             }}
           >
             <span></span>
@@ -121,16 +126,21 @@ export class RsAnalyticsRhythm extends LitElement {
           ${this._selected ? this._renderPopup(days) : nothing}
         </div>
         <div class="foot">
-          ${this._renderLegend(view)}
-          <div>${localize("analytics.rhythm_hint", l)}</div>
+          ${this._renderLegend(view, days)}
+          <div>
+            ${localize(this._touch ? "analytics.rhythm_hint_touch" : "analytics.rhythm_hint", l)}
+          </div>
           <div class="sr-only" aria-live="polite">${this._selected ? this._when(days) : ""}</div>
         </div>
-      </ha-card>
+      </rs-list-card>
     `;
   }
 
   private _renderRow(day: RhythmDay, row: number, view: RhythmView) {
-    const inRange = day.date >= isoDate(this.rangeStart) && day.date <= isoDate(this.rangeEnd);
+    const zone = haTimeZone(this.hass);
+    const inRange =
+      day.date >= isoDateInZone(this.rangeStart, zone) &&
+      day.date <= isoDateInZone(this.rangeEnd, zone);
     return html`
       <button
         class="day-label ${inRange ? "in-range" : ""}"
@@ -145,6 +155,7 @@ export class RsAnalyticsRhythm extends LitElement {
           view === "activity" ? this._activityColor(day, hour) : this._comfortColor(day, hour);
         const window = view === "activity" && (day.window[hour] ?? 0) > 0;
         return html`<span
+          @click=${(e: PointerEvent) => this._onCellClick(e, day.date)}
           class="cell ${selected ? "selected" : ""} ${window ? "window" : ""}"
           data-row=${row}
           data-hour=${hour}
@@ -164,43 +175,61 @@ export class RsAnalyticsRhythm extends LitElement {
   }
 
   private _comfortColor(day: RhythmDay, hour: number): string | null {
-    const value = day.deviation[hour];
-    if (value == null) return null;
-    if (Math.abs(value) < DEVIATION_DEAD_ZONE_K) return "var(--rs-idle)";
-    return shade(
-      value < 0 ? "--rs-cold" : "--rs-warm",
-      Math.min(Math.abs(value) / DEVIATION_FULL_K, 1),
-    );
+    const below = day.below[hour];
+    const above = day.above[hour];
+    if (below == null || above == null) return null;
+    if (below === 0 && above === 0) return "var(--rs-on-target)";
+    return below >= above ? shade("--rs-cold", below) : shade("--rs-warm", above);
   }
 
   private _rowTotal(day: RhythmDay, view: RhythmView): string {
-    const l = this.language;
-    const number = (v: number) => new Intl.NumberFormat(l, { maximumFractionDigits: 1 }).format(v);
     if (view === "activity") {
       const sum = (values: Array<number | null>) =>
         values.reduce<number>((a, v) => a + (v ?? 0), 0);
       const hours = sum(day.heat) + sum(day.cool);
-      return hours > 0 ? `${number(hours)} h` : "";
+      return hours > 0 ? formatHours(hours, this.language) : "";
     }
-    const known = day.deviation.filter((v): v is number => v != null);
-    if (known.length === 0) return "";
-    const mean = known.reduce((a, v) => a + Math.abs(v), 0) / known.length;
-    return mean >= 0.05 ? `±${number(toDisplayDelta(mean, this.hass))}` : "";
+    if (day.within == null) return "";
+    // Floor: 99.6 % on target must not read as 100 %
+    return formatPercent(Math.floor(day.within * 100), this.hass);
   }
 
-  private _renderLegend(view: RhythmView) {
+  private _renderLegend(view: RhythmView, days: RhythmDay[]) {
     const l = this.language;
     if (view === "activity") {
+      const any = (key: "heat" | "cool" | "window") => days.some((d) => d[key].some((v) => !!v));
       return html`<div class="legend">
-        <span><i class="key warm"></i>${localize("analytics.heating_period", l)}</span>
-        <span><i class="key cold"></i>${localize("analytics.cooling_period", l)}</span>
-        <span><i class="key window-key"></i>${localize("analytics.window_open_period", l)}</span>
+        ${
+          this.canHeat || any("heat")
+            ? html`<span><i class="key warm"></i>${localize("analytics.heating_period", l)}</span>`
+            : nothing
+        }
+        ${
+          this.canCool || any("cool")
+            ? html`<span><i class="key cold"></i>${localize("analytics.cooling_period", l)}</span>`
+            : nothing
+        }
+        ${
+          this.hasWindowSensor || any("window")
+            ? html`<span
+                ><i class="key window-key"></i>${localize("analytics.window_open_period", l)}</span
+              >`
+            : nothing
+        }
       </div>`;
     }
     return html`<div class="legend">
-      <span>${localize("analytics.comfort_below", l)}</span>
-      <i class="scale"></i>
-      <span>${localize("analytics.comfort_above", l)}</span>
+      ${
+        this.bandSides !== "cool"
+          ? html`<span><i class="key cold"></i>${localize("analytics.comfort_below", l)}</span>`
+          : nothing
+      }
+      <span><i class="key ok"></i>${localize("analytics.comfort_on_target", l)}</span>
+      ${
+        this.bandSides !== "heat"
+          ? html`<span><i class="key warm"></i>${localize("analytics.comfort_above", l)}</span>`
+          : nothing
+      }
     </div>`;
   }
 
@@ -218,54 +247,64 @@ export class RsAnalyticsRhythm extends LitElement {
     const day = days[row];
     if (!day) return nothing;
     const unit = tempUnit(this.hass);
-    const percent = (v: number) =>
-      new Intl.NumberFormat(l, { style: "percent", maximumFractionDigits: 0 }).format(v);
-    const temp = (v: number) =>
-      `${new Intl.NumberFormat(l, {
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      }).format(toDisplay(v, this.hass))}\u00A0${unit}`;
-    const delta = (v: number) =>
-      `${new Intl.NumberFormat(l, {
-        signDisplay: "exceptZero",
-        maximumFractionDigits: 1,
-      }).format(toDisplayDelta(v, this.hass))}\u00A0${unit}`;
+    const percent = (v: number) => formatPercent(v * 100, this.hass);
+    const temp = (v: number) => `${formatTempLocale(v, this.hass)}\u00A0${unit}`;
     const lines: Array<[string, string]> = [];
     const add = (label: string, value: number | null, format: (v: number) => string) => {
       if (value != null) lines.push([label, format(value)]);
     };
     const share = (label: string, value: number | null) => add(label, value || null, percent);
     add(localize("analytics.temperature", l), day.temp[hour], temp);
-    add(localize("analytics.rhythm_comfort", l), day.deviation[hour], delta);
+    share(localize("analytics.comfort_below", l), day.below[hour]);
+    share(localize("analytics.comfort_above", l), day.above[hour]);
     share(localize("analytics.heating_period", l), day.heat[hour]);
     share(localize("analytics.cooling_period", l), day.cool[hour]);
     share(localize("analytics.window_open_period", l), day.window[hour]);
-    add(localize("analytics.humidity", l), day.humidity[hour], (v) => `${Math.round(v)}\u00A0%`);
+    add(localize("analytics.humidity", l), day.humidity[hour], (v) => formatPercent(v, this.hass));
     add(localize("analytics.outdoor", l), day.outdoor[hour], temp);
     return html`
       <div
-        class="popup ${below ? "below" : ""}"
-        role="tooltip"
+        class="popup floating-surface ${below ? "below" : ""} ${this._tapped ? "tapped" : ""}"
+        role=${this._tapped ? "group" : "tooltip"}
+        @pointerdown=${() => {
+          this._popupPressed = true;
+        }}
         style="left: ${x}px; top: ${y}px; width: ${POPUP_WIDTH}px"
       >
         <div class="popup-title">${this._when(days)}</div>
-        ${lines.length > 0
-          ? lines.map(
-              ([label, value]) => html`
-                <div class="popup-line"><span>${label}</span><span>${value}</span></div>
-              `,
-            )
-          : html`<div class="popup-line">${localize("analytics.no_data", l)}</div>`}
+        ${
+          lines.length > 0
+            ? lines.map(
+                ([label, value]) => html`
+                  <div class="popup-line"><span>${label}</span><span>${value}</span></div>
+                `,
+              )
+            : html`<div class="popup-line">${localize("analytics.rhythm_no_values", l)}</div>`
+        }
+        ${
+          this._tapped
+            ? html`<button class="popup-action" @click=${() => this._selectDay(day.date)}>
+                ${localize("analytics.rhythm_show_day", l)}
+              </button>`
+            : nothing
+        }
       </div>
     `;
   }
 
   private _selectDay(date: string) {
+    this._popupPressed = false;
+    this._selected = null;
     this.dispatchEvent(new CustomEvent("day-selected", { detail: date }));
   }
 
+  // A mouse sees the hour on hover, so its click picks the day; a tap opens the hour instead
+  private _onCellClick(e: PointerEvent, date: string) {
+    if (e.pointerType === "mouse") this._selectDay(date);
+  }
+
   private _formatDay(date: string, options: Intl.DateTimeFormatOptions): string {
-    return new Intl.DateTimeFormat(this.language, options).format(new Date(`${date}T12:00:00`));
+    return formatIsoDay(date, this.language, options);
   }
 
   private _formatHour(hour: number): string {
@@ -274,11 +313,16 @@ export class RsAnalyticsRhythm extends LitElement {
     );
   }
 
-  private _onChip(e: CustomEvent<string>) {
-    this._view = e.detail as RhythmView;
+  private _onView(e: CustomEvent<{ value: string }>) {
+    e.stopPropagation();
+    this._view = e.detail.value as RhythmView;
   }
 
   private _onPointer(e: PointerEvent) {
+    if (e.type === "pointerdown") {
+      this._tapped = e.pointerType !== "mouse";
+      this._popupPressed = false;
+    }
     const cell = (e.target as HTMLElement).closest<HTMLElement>("[data-row]");
     if (!cell) return;
     const row = Number(cell.dataset.row);
@@ -317,6 +361,11 @@ export class RsAnalyticsRhythm extends LitElement {
       ArrowRight: [0, 1],
     };
     if (e.key === "Escape") this._selected = null;
+    if (e.key === "Enter" && this._selected) {
+      const day = this.rhythm?.days[this._selected.row];
+      if (day) this._selectDay(day.date);
+      return;
+    }
     const move = moves[e.key];
     if (!move) return;
     e.preventDefault();
@@ -327,225 +376,233 @@ export class RsAnalyticsRhythm extends LitElement {
     );
   }
 
-  static styles = css`
-    :host {
-      display: block;
-      --rs-cold: var(--state-climate-cool-color, #2b9af9);
-      --rs-warm: var(--state-climate-heat-color, #ff8100);
-      --rs-idle: color-mix(in srgb, var(--primary-text-color) 7%, var(--card-background-color));
-    }
-
-    ha-card {
-      margin-bottom: 16px;
-    }
-
-    .header {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 16px 16px 8px;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 500;
-    }
-
-    .subtitle {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .grid-wrap {
-      position: relative;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: max-content repeat(24, minmax(0, 1fr)) 40px;
-      gap: 2px;
-      align-items: center;
-      padding: 0 16px;
-      font-size: 11px;
-      color: var(--secondary-text-color);
-      font-variant-numeric: tabular-nums;
-      touch-action: pan-y;
-      outline: none;
-    }
-
-    .grid:focus-visible {
-      outline: 2px solid var(--primary-color);
-      outline-offset: 2px;
-      border-radius: 4px;
-    }
-
-    .hour-label {
-      white-space: nowrap;
-    }
-
-    .day-label {
-      height: 100%;
-      padding: 0 6px;
-      border: none;
-      border-radius: 4px;
-      background: transparent;
-      color: inherit;
-      font: inherit;
-      text-align: left;
-      white-space: nowrap;
-      cursor: pointer;
-      touch-action: manipulation;
-    }
-
-    .day-label:hover {
-      color: var(--primary-color);
-    }
-
-    .day-label:focus-visible {
-      outline: 2px solid var(--primary-color);
-    }
-
-    .day-label.in-range {
-      color: var(--primary-color);
-      font-weight: 500;
-      background: color-mix(in srgb, var(--primary-color) 14%, transparent);
-      box-shadow: inset 2px 0 var(--primary-color);
-    }
-
-    .day-total {
-      text-align: right;
-      white-space: nowrap;
-    }
-
-    .cell {
-      position: relative;
-      height: 18px;
-      border-radius: 3px;
-      cursor: crosshair;
-    }
-
-    .cell.selected {
-      box-shadow: 0 0 0 1.5px var(--primary-text-color);
-    }
-
-    .cell.window::after {
-      content: "";
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 4px;
-      height: 4px;
-      margin: -2px 0 0 -2px;
-      border-radius: 50%;
-      background: var(--primary-text-color);
-    }
-
-    .foot {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 10px 16px 14px;
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .legend {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 4px 14px;
-    }
-
-    .legend span {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .key {
-      width: 10px;
-      height: 10px;
-      border-radius: 3px;
-    }
-
-    .key.warm {
-      background: var(--rs-warm);
-    }
-
-    .key.cold {
-      background: var(--rs-cold);
-    }
-
-    .key.window-key {
-      width: 4px;
-      height: 4px;
-      margin: 0 3px;
-      border-radius: 50%;
-      background: var(--primary-text-color);
-    }
-
-    .scale {
-      width: 96px;
-      height: 8px;
-      border-radius: 4px;
-      background: linear-gradient(90deg, var(--rs-cold), var(--rs-idle), var(--rs-warm));
-    }
-
-    .popup {
-      position: absolute;
-      z-index: 5;
-      box-sizing: border-box;
-      padding: 8px 10px;
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      background: var(--card-background-color);
-      box-shadow:
-        0 1px 2px rgba(0, 0, 0, 0.2),
-        0 6px 18px rgba(0, 0, 0, 0.22);
-      font-size: 12px;
-      line-height: 1.5;
-      font-variant-numeric: tabular-nums;
-      color: var(--primary-text-color);
-      transform: translate(-50%, calc(-100% - 6px));
-      pointer-events: none;
-    }
-
-    .popup.below {
-      transform: translate(-50%, 6px);
-    }
-
-    .popup-title {
-      margin-bottom: 2px;
-      font-weight: 500;
-    }
-
-    .popup-line {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .popup-line span:last-child {
-      color: var(--primary-text-color);
-      white-space: nowrap;
-    }
-
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-    }
-
-    @media (max-width: 600px) {
-      .grid {
-        grid-template-columns: max-content repeat(24, minmax(0, 1fr)) 34px;
-        gap: 1px;
+  static styles = [
+    tokens,
+    srOnly,
+    floatingStyles,
+    css`
+      :host {
+        display: block;
+        margin-bottom: var(--rs-space-4);
+        --rs-cold: var(--rs-cool);
+        --rs-warm: var(--rs-heat);
+        --rs-idle: color-mix(in srgb, var(--primary-text-color) 7%, var(--card-background-color));
+        --rs-on-target: color-mix(in srgb, var(--rs-ok) 35%, var(--rs-idle));
       }
-    }
-  `;
+
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--rs-space-2);
+        padding: 0 var(--rs-space-4);
+      }
+
+      .period {
+        font-size: 13px;
+        color: var(--secondary-text-color);
+      }
+
+      rs-segmented {
+        flex: none;
+      }
+
+      .grid-wrap {
+        position: relative;
+        padding-top: var(--rs-space-2);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: max-content repeat(24, minmax(0, 1fr)) 40px;
+        gap: 2px;
+        align-items: center;
+        padding: 0 16px;
+        font-size: 11px;
+        color: var(--secondary-text-color);
+        font-variant-numeric: tabular-nums;
+        touch-action: pan-y;
+        outline: none;
+      }
+
+      .grid:focus-visible {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 2px;
+        border-radius: 4px;
+      }
+
+      .hour-label {
+        white-space: nowrap;
+      }
+
+      .day-label {
+        height: 100%;
+        padding: 0 6px;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        white-space: nowrap;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .day-label:hover {
+        color: var(--primary-color);
+      }
+
+      .day-label:focus-visible {
+        outline: 2px solid var(--primary-color);
+      }
+
+      .day-label.in-range {
+        color: var(--primary-color);
+        font-weight: 500;
+        background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+        box-shadow: inset 2px 0 var(--primary-color);
+      }
+
+      .day-total {
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .cell {
+        position: relative;
+        height: 18px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+
+      .cell.selected {
+        box-shadow: 0 0 0 1.5px var(--primary-text-color);
+      }
+
+      .cell.window::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 4px;
+        height: 4px;
+        margin: -2px 0 0 -2px;
+        border-radius: 50%;
+        background: var(--primary-text-color);
+      }
+
+      .foot {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 16px 14px;
+        font-size: 12px;
+        color: var(--secondary-text-color);
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 14px;
+      }
+
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .key {
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+      }
+
+      .key.warm {
+        background: var(--rs-warm);
+      }
+
+      .key.cold {
+        background: var(--rs-cold);
+      }
+
+      .key.window-key {
+        width: 4px;
+        height: 4px;
+        margin: 0 3px;
+        border-radius: 50%;
+        background: var(--primary-text-color);
+      }
+
+      .key.ok {
+        background: var(--rs-on-target);
+      }
+
+      .popup {
+        position: absolute;
+        z-index: 5;
+        padding: 8px 12px;
+        font-size: 12px;
+        line-height: 1.5;
+        font-variant-numeric: tabular-nums;
+        transform: translate(-50%, calc(-100% - 6px));
+        pointer-events: none;
+      }
+
+      .popup.below {
+        transform: translate(-50%, 6px);
+      }
+
+      .popup.tapped {
+        pointer-events: auto;
+      }
+
+      .popup-action {
+        width: 100%;
+        min-height: 44px;
+        margin-top: 6px;
+        border: none;
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+        color: var(--primary-color);
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .popup-action:focus-visible {
+        outline: 2px solid var(--primary-color);
+      }
+
+      .popup-title {
+        margin-bottom: 2px;
+        font-weight: 500;
+      }
+
+      .popup-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--secondary-text-color);
+      }
+
+      .popup-line span:last-child {
+        color: var(--primary-text-color);
+        white-space: nowrap;
+      }
+
+      @media (max-width: 600px) {
+        .grid {
+          grid-template-columns: max-content repeat(24, minmax(0, 1fr)) 34px;
+          gap: 1px;
+        }
+      }
+    `,
+  ];
 }
 
 declare global {

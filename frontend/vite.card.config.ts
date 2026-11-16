@@ -7,8 +7,12 @@ const CARD_KEY_PREFIXES = [
   "override.",
   "mode.",
   "card.",
+  "duration.",
   "hero.",
+  "error.",
   "room.climate_control_toggle",
+  "detail.override.label",
+  "detail.override.duration",
 ];
 
 function cardLocales(): Plugin {

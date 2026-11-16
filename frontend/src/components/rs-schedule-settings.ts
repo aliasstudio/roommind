@@ -1,40 +1,57 @@
 import { html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type {
-  ClimateMode,
-  DeviceConfig,
-  RoomConfig,
-  ScheduleBlockData,
-  ScheduleBlocks,
-  ScheduleEntry,
-  ScheduleTempWarning,
-} from "../types";
+import type { ScheduleEntry, ClimateMode, ScheduleTempWarning } from "../types";
 import { localize } from "../utils/localize";
 import {
-  formatTemp,
+  formatTempLocale,
   tempUnit,
-  toDisplay,
-  toCelsius,
+  isPlausibleTargetTemp,
   MIN_TARGET_TEMP_C,
   MAX_TARGET_TEMP_C,
-  tempStep,
   tempRange,
 } from "../utils/temperature";
+import { formatNumber } from "../utils/format";
 import { RsScheduleBase } from "./shared/rs-schedule-base";
-import { getSelectValue } from "../utils/events";
 import { inputStyles } from "../styles/input-styles";
-import {
-  emptyBlocks,
-  findActiveBlock,
-  isInlineSchedule,
-  stripInapplicableData,
-} from "../utils/schedule";
-import "./rs-schedule-editor";
-import "./shared/rs-toggle-row";
+import { priceShiftLabel } from "./room-detail/rs-price-shift";
+import { isAdmin, isEditableSchedule, readWeek } from "../utils/schedule-api";
+import { dayTimes, nowInZone, type Week } from "../utils/schedule-week";
+import "./shared/rs-list-row";
+import "./shared/rs-info-icon";
+import "./schedule/rs-schedule-create";
+import "./schedule/rs-day-timeline";
 
 /** Mirrors _WEEKDAYS in the backend's schedule_utils.py. */
 const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
+/** Texts of the pre-heat switch by the lead it controls. */
+const PREHEAT_KEYS = {
+  heat: {
+    label: "schedule.preheat_label",
+    sub: "detail.schedule.preheat_sub",
+    hint: "schedule.preheat_hint",
+  },
+  cool: {
+    label: "schedule.precool_label",
+    sub: "detail.schedule.precool_sub",
+    hint: "schedule.precool_hint",
+  },
+  both: {
+    label: "schedule.preheat_precool_label",
+    sub: "detail.schedule.preheat_precool_sub",
+    hint: "schedule.preheat_precool_hint",
+  },
+} as const;
+
+/** Which dialog a row of the card opens (`edit-click` detail `{ part }`). */
+export type ScheduleCardPart = "schedule" | "temperatures" | "price";
+
+/**
+ * The room's "Schedule & temperatures" card. View mode: one row per schedule, comfort, eco,
+ * pre-heat, device changes and price; each clickable row fires `edit-click` with the dialog it
+ * belongs to. Edit mode is the content of the schedule dialog (assigned helpers, adding one,
+ * selector); temperatures and price have their own dialog components.
+ */
 @customElement("rs-schedule-settings")
 export class RsScheduleSettings extends RsScheduleBase {
   @property({ attribute: false }) public schedules: ScheduleEntry[] = [];
@@ -57,140 +74,109 @@ export class RsScheduleSettings extends RsScheduleBase {
   @property({ type: Number }) public ecoHeat = 17.0;
   @property({ type: Number }) public ecoCool = 27.0;
   @property({ type: String }) public climateMode: ClimateMode = "auto";
-  /** Room devices, forwarded so block fan fields offer real device modes. */
-  @property({ attribute: false }) public devices: DeviceConfig[] = [];
-  /** Every room's config, so a schedule can be copied from another room. */
-  @property({ attribute: false }) public rooms: Record<string, RoomConfig> = {};
-  @property({ type: String }) public areaId = "";
-
-  /** Index of the inline schedule whose weekly editor is open, or -1. */
-  @state() private _editingBlocksIndex = -1;
-  /** Index of the schedule currently being imported from its helper, or -1. */
-  @state() private _importingIndex = -1;
-  @state() private _importError = "";
   @property({ attribute: false }) public scheduleTempWarnings: ScheduleTempWarning[] = [];
   @property({ type: Boolean }) public preheatEnabled = true;
-  @property({ type: Boolean }) public showPreheat = false;
+  /** Which lead the pre-heat switch controls here ("" hides it). */
+  @property({ type: String }) public preheatSides: "" | "heat" | "cool" | "both" = "";
   @property({ type: Boolean }) public followDeviceSetpoint = false;
+  /** K the schedule target may move with the electricity price (0 = off). */
+  @property({ type: Number }) public priceShift = 0;
+  /** A price source is set in the settings; without one the option is hidden. */
+  @property({ type: Boolean }) public priceConfigured = false;
+  /** What the room does while its schedule is off / everybody is away (global settings). */
+  @property({ type: String }) public scheduleOffAction: "eco" | "off" = "eco";
+  @property({ type: String }) public presenceAwayAction: "eco" | "off" = "eco";
+  /** Presence detection applies to this room (on globally, persons to watch, not ignored). */
+  @property({ type: Boolean }) public presenceActive = false;
+  /** An empty room drops to eco (occupancy eco with sensors). */
+  @property({ type: Boolean }) public occupancyEco = false;
+  /** Default name of a schedule created from the dialog. */
+  @property({ type: String }) public roomName = "";
+
+  @state() private _creating = false;
+  /** Week of the active schedule for today's timeline; `_weekKey` = what it was read for. */
+  @state() private _week: Week | null = null;
+  @state() private _now = nowInZone(undefined);
+  private _weekKey = "";
+  private _clock?: ReturnType<typeof setInterval>;
+  protected readonly _kind = "climate";
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._tick();
+    this._clock = setInterval(() => this._tick(), 60_000);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearInterval(this._clock);
+    this._weekKey = "";
+  }
+
+  private _tick() {
+    this._now = nowInZone(this.hass?.config?.time_zone);
+  }
+
+  protected willUpdate(changed: Map<PropertyKey, unknown>) {
+    super.willUpdate(changed);
+    // The first hass brings Home Assistant's time zone
+    if (changed.has("hass") && !changed.get("hass")) this._tick();
+  }
+
+  protected updated(changed: Map<PropertyKey, unknown>) {
+    super.updated(changed);
+    this._loadWeek();
+  }
+
+  /** Reads the active schedule again when it changes or its entity reports a new state. */
+  private _loadWeek() {
+    if (this.editing || !this.hass) return;
+    const index = this.schedules.findIndex(
+      (_, i) => this._getScheduleState(i, this.schedules.length) === "active",
+    );
+    const eid = index >= 0 ? this.schedules[index].entity_id : "";
+    const st = eid ? this.hass.states[eid] : undefined;
+    const key = st && st.state !== "unavailable" ? `${eid}|${st.last_updated}` : "";
+    if (key === this._weekKey) return;
+    this._weekKey = key;
+    if (!key) {
+      this._week = null;
+      return;
+    }
+    readWeek(this.hass, eid).then(
+      (week) => {
+        if (this._weekKey === key) this._week = week;
+      },
+      () => {
+        if (this._weekKey === key) this._week = null;
+      },
+    );
+  }
 
   static styles = [
     RsScheduleBase.sharedStyles,
     inputStyles,
     css`
-      .blocks-editor {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        margin: 0 0 12px;
-        padding: 12px 14px;
-        border-radius: 8px;
-        background: var(--secondary-background-color, rgba(0, 0, 0, 0.03));
+      .inline-warning.in-list {
+        margin: 0 16px 8px;
       }
 
-      .import-error {
-        font-size: 12px;
-        color: var(--error-color, #db4437);
-        margin-bottom: 8px;
+      /* The edit button needs room: on phones it moves to a second line instead of the name. */
+      .schedule-row {
+        flex-wrap: wrap;
       }
 
-      .add-inline-button {
-        font: inherit;
-        color: var(--primary-color);
-        background: none;
-        border: 1px dashed var(--primary-color);
-        border-radius: 8px;
-        padding: 8px 12px;
-        cursor: pointer;
-        margin-bottom: 12px;
-        width: 100%;
+      .schedule-row .schedule-name {
+        flex: 1 1 140px;
       }
 
-      .fallback-hint {
-        font-size: 11px;
-        color: var(--secondary-text-color);
-        margin-top: 4px;
-        font-style: italic;
+      .schedule-row ha-button {
+        flex: none;
+        margin-left: auto;
       }
 
-      .temp-inputs {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px;
-        margin-top: 16px;
-      }
-
-      .temp-input-group {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      ha-textfield {
-        flex: 1;
-      }
-
-      .preheat-toggle,
-      .follow-device-toggle {
-        margin-top: 16px;
-      }
-
-      .view-temps {
-        display: flex;
-        gap: 16px;
-        font-size: 13px;
-        color: var(--secondary-text-color);
-        margin-top: 12px;
-        padding-top: 12px;
-        border-top: 1px solid var(--divider-color, #eee);
-      }
-
-      .view-temps span {
-        font-weight: 500;
-        color: var(--primary-text-color);
-      }
-
-      .view-selector-info {
-        font-size: 12px;
-        color: var(--secondary-text-color);
-        margin-top: 8px;
-      }
-
-      .temp-grid-auto {
-        display: grid;
-        grid-template-columns: auto 1fr 1fr;
-        gap: 8px 12px;
-        align-items: center;
-        margin-top: 16px;
-      }
-      .temp-grid-header {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--secondary-text-color);
-        text-transform: uppercase;
-        letter-spacing: 0.3px;
-        text-align: center;
-      }
-      .temp-grid-row-label {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--secondary-text-color);
-        white-space: nowrap;
-      }
-
-      @media (max-width: 600px) {
-        .temp-grid-auto {
-          grid-template-columns: 1fr 1fr;
-        }
-        .temp-grid-row-label {
-          grid-column: 1 / -1;
-          margin-top: 8px;
-        }
-        .temp-grid-header {
-          display: none;
-        }
+      .create-row {
+        margin: 0 -16px 8px;
       }
     `,
   ];
@@ -207,159 +193,273 @@ export class RsScheduleSettings extends RsScheduleBase {
   private _renderViewMode() {
     const l = this.hass.language;
     const hasMultiple = this.schedules.length >= 2;
+    const unit = tempUnit(this.hass);
+    const fmt = (c: number) => formatTempLocale(c, this.hass, 0, 1);
+    const band = (heat: number, cool: number) =>
+      this.climateMode === "auto"
+        ? `${fmt(heat)}–${fmt(cool)}\u00a0${unit}`
+        : `${fmt(this.climateMode === "cool_only" ? cool : heat)}\u00a0${unit}`;
+    const open = (part: ScheduleCardPart) => (e: Event) => this._onEditClick(e, part);
 
     return html`
-      ${this.schedules.length > 0
-        ? html`
-            <div class="schedule-list">
-              ${this.schedules.map((schedule, index) => {
-                const state = this._getScheduleState(index, this.schedules.length);
-                return html`
-                  <div class="schedule-row ${state}">
-                    ${hasMultiple
-                      ? html`<span class="schedule-number">${index + 1}</span>`
-                      : nothing}
-                    <span class="schedule-status-dot"></span>
-                    ${isInlineSchedule(schedule)
-                      ? html`<span class="schedule-name">${this._getScheduleLabel(schedule)}</span>`
-                      : html`<span
-                          class="schedule-name schedule-link"
-                          @click=${() => this._openEntityInfo(schedule.entity_id!)}
-                          >${this._getScheduleLabel(schedule)}</span
-                        >`}
-                    <span class="schedule-status">${this._getStatusText(index, state)}</span>
-                  </div>
-                  ${this._renderRejectedTempWarning(state)}
-                `;
-              })}
-            </div>
-          `
-        : html`<div class="no-schedules">${localize("schedule.no_schedules", l)}</div>`}
-      ${this.climateMode === "auto"
-        ? html`
-            <div class="view-temps">
-              ${localize("schedule.view_heat", l, {
-                comfort: formatTemp(this.comfortHeat, this.hass),
-                eco: formatTemp(this.ecoHeat, this.hass),
-                unit: tempUnit(this.hass),
-              })}
-               · 
-              ${localize("schedule.view_cool", l, {
-                comfort: formatTemp(this.comfortCool, this.hass),
-                eco: formatTemp(this.ecoCool, this.hass),
-                unit: tempUnit(this.hass),
-              })}
-            </div>
-          `
-        : html`
-            <div class="view-temps">
-              ${localize("schedule.view_comfort", l, {
-                temp: formatTemp(
-                  this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
-                  this.hass,
-                ),
-                unit: tempUnit(this.hass),
-              })}
-               · 
-              ${localize("schedule.view_eco", l, {
-                temp: formatTemp(
-                  this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat,
-                  this.hass,
-                ),
-                unit: tempUnit(this.hass),
-              })}
-            </div>
-          `}
-      ${this.showPreheat && !this.preheatEnabled
-        ? html`<div class="view-selector-info">${localize("schedule.view_preheat_off", l)}</div>`
-        : nothing}
-      ${this.followDeviceSetpoint
-        ? html`<div class="view-selector-info">
-            ${localize("schedule.view_follow_device_setpoint", l)}
-          </div>`
-        : nothing}
-      ${this.scheduleSelectorEntity
-        ? html`<div class="view-selector-info">
-            ${localize("schedule.view_selector_prefix", l)}
-            <span
-              class="schedule-link"
-              @click=${() => this._openEntityInfo(this.scheduleSelectorEntity!)}
-              >${this._getFriendlyName(this.scheduleSelectorEntity)}</span
+      ${
+        this.schedules.length > 0
+          ? this.schedules.map((schedule, index) => {
+              const state = this._getScheduleState(index, this.schedules.length);
+              const name = this._getFriendlyName(schedule.entity_id);
+              return html`
+                <rs-list-row
+                  clickable
+                  chevron
+                  icon="mdi:calendar-clock"
+                  icon-label=${localize("detail.more_info", l)}
+                  .iconColor=${state === "active" ? "var(--primary-color)" : ""}
+                  .heading=${hasMultiple ? `${index + 1} · ${name}` : name}
+                  .secondary=${[this._getStatusText(index, state), this._usage(schedule.entity_id)]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  @row-click=${open("schedule")}
+                  @icon-click=${() => this._openEntityInfo(schedule.entity_id)}
+                  >${state === "active" ? this._renderToday() : nothing}</rs-list-row
+                >
+                ${this._renderRejectedTempWarning(state, true)}
+              `;
+            })
+          : html`<rs-list-row
+              clickable
+              plain-icon
+              variant="primary"
+              icon="mdi:plus"
+              .heading=${localize("detail.schedule.add", l)}
+              .secondary=${localize("schedule.no_schedules", l)}
+              @row-click=${open("schedule")}
+            ></rs-list-row>`
+      }
+      ${
+        this.scheduleSelectorEntity
+          ? html`<rs-list-row
+              clickable
+              chevron
+              icon="mdi:swap-horizontal-circle-outline"
+              icon-label=${localize("detail.more_info", l)}
+              .heading=${this._getFriendlyName(this.scheduleSelectorEntity)}
+              .secondary=${localize("schedule.view_selector_prefix", l).replace(/:\s*$/, "")}
+              .value=${this.selectorStateText()}
+              @row-click=${open("schedule")}
+              @icon-click=${() => this._openEntityInfo(this.scheduleSelectorEntity)}
+            ></rs-list-row>`
+          : nothing
+      }
+      <rs-list-row
+        clickable
+        chevron
+        icon="mdi:sofa"
+        .heading=${localize("override.comfort", l)}
+        .secondary=${this._comfortSub()}
+        .value=${band(this.comfortHeat, this.comfortCool)}
+        @row-click=${open("temperatures")}
+      ></rs-list-row>
+      <rs-list-row
+        clickable
+        chevron
+        icon="mdi:leaf"
+        .heading=${localize("override.eco", l)}
+        .secondary=${this._ecoSub()}
+        .value=${band(this.ecoHeat, this.ecoCool)}
+        @row-click=${open("temperatures")}
+      ></rs-list-row>
+      ${
+        this.preheatSides
+          ? html`<rs-list-row
+              switch
+              wrap
+              icon="mdi:clock-fast"
+              .heading=${localize(PREHEAT_KEYS[this.preheatSides].label, l)}
+              .secondary=${localize(PREHEAT_KEYS[this.preheatSides].sub, l)}
+              .checked=${this.preheatEnabled}
+              @toggle-changed=${(e: CustomEvent<boolean>) =>
+                this._fireValue("preheat-changed", e.detail)}
             >
-          </div>`
-        : nothing}
+              <rs-info-icon
+                slot="end"
+                .text=${localize(PREHEAT_KEYS[this.preheatSides].hint, l)}
+              ></rs-info-icon>
+            </rs-list-row>`
+          : nothing
+      }
+      <rs-list-row
+        switch
+        wrap
+        icon="mdi:gesture-tap"
+        .heading=${localize("schedule.follow_device_setpoint_label", l)}
+        .secondary=${localize(
+          this.schedules.length
+            ? "detail.schedule.follow_sub"
+            : "detail.schedule.follow_sub_no_schedule",
+          l,
+        )}
+        .checked=${this.followDeviceSetpoint}
+        @toggle-changed=${(e: CustomEvent<boolean>) =>
+          this._fireValue("follow-device-setpoint-changed", e.detail)}
+      >
+        <rs-info-icon
+          slot="end"
+          .text=${localize("schedule.follow_device_setpoint_hint", l)}
+        ></rs-info-icon>
+      </rs-list-row>
+      ${
+        this.priceConfigured
+          ? html`<rs-list-row
+              clickable
+              chevron
+              icon="mdi:cash-clock"
+              .heading=${localize("schedule.price_shift_label", l)}
+              .secondary=${localize("detail.schedule.price_sub", l)}
+              .value=${
+                this.priceShift > 0
+                  ? priceShiftLabel(this.priceShift, this.hass)
+                  : localize("schedule.price_shift_off", l)
+              }
+              @row-click=${open("price")}
+            ></rs-list-row>`
+          : nothing
+      }
     `;
   }
 
-  // ─── Edit mode ─────────────────────────────────────────────────
+  /** Today's blocks of the active schedule as a bar under its row. */
+  private _renderToday() {
+    if (!this._week) return nothing;
+    const l = this.hass.language;
+    const blocks = this._week[this._now.day] ?? [];
+    const times = dayTimes(blocks);
+    return html`<rs-day-timeline
+      slot="secondary"
+      .blocks=${blocks}
+      .nowMinute=${this._now.minute}
+      .color=${this.climateMode === "cool_only" ? "var(--rs-cool)" : "var(--rs-heat)"}
+      .label=${
+        times ? localize("schedule.today_blocks", l, { times }) : localize("schedule.today_none", l)
+      }
+    ></rs-day-timeline>`;
+  }
+
+  /** When comfort applies in this room. */
+  private _comfortSub(): string {
+    const l = this.hass.language;
+    if (this.schedules.length) return localize("detail.schedule.comfort_sub", l);
+    return localize(
+      this.presenceActive
+        ? "detail.schedule.comfort_sub_home"
+        : "detail.schedule.comfort_sub_always",
+      l,
+    );
+  }
+
+  /** When eco applies in this room: schedule off, nobody home, room empty, else only by choice. */
+  private _ecoSub(): string {
+    const l = this.hass.language;
+    const when: string[] = [];
+    if (this.schedules.length && this.scheduleOffAction === "eco") {
+      when.push(localize("detail.schedule.when_schedule_off", l));
+    }
+    if (this.presenceActive && this.presenceAwayAction === "eco") {
+      when.push(localize("detail.schedule.when_away", l));
+    }
+    if (this.occupancyEco) when.push(localize("detail.schedule.when_empty", l));
+    if (!when.length) return localize("detail.schedule.eco_sub_manual", l);
+    const list = new Intl.ListFormat(l, { type: "disjunction" }).format(when);
+    return localize("detail.schedule.eco_sub", l, { when: list });
+  }
+
+  private _onEditClick(e: Event, part: ScheduleCardPart) {
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent("edit-click", { detail: { part }, bubbles: true, composed: true }),
+    );
+  }
+
+  private _fireValue(name: string, value: unknown) {
+    this.dispatchEvent(new CustomEvent(name, { detail: { value }, bubbles: true, composed: true }));
+  }
+
+  // ─── Edit mode (schedule dialog) ───────────────────────────────
 
   private _renderEditMode() {
     const l = this.hass.language;
-    const count = this.schedules.length;
-    const usedIds = new Set(
-      this.schedules.map((schedule) => schedule.entity_id).filter((id): id is string => !!id),
-    );
-
     return html`
-      ${this._renderScheduleList()}
-      ${this._importError
-        ? html`<div class="import-error">
-            ${localize("schedule.editor_import_failed", l, { error: this._importError })}
-          </div>`
-        : nothing}
-      <button class="add-inline-button" @click=${this._addInlineSchedule}>
-        ${localize("schedule.editor_add_inline", l)}
-      </button>
-      ${this._renderCopyRow(l)}
-      ${this._renderAddRow(
-        localize("schedule.select_schedule", l),
-        this._getAvailableEntities(usedIds),
-        (eid) => this._addSchedule(eid),
-        localize("schedule.create_helper_hint", l),
-      )}
+      ${this._renderScheduleList()} ${this._renderAddSource()}
       ${this._renderSelectorSection(
-        count,
+        this.schedules.length,
         localize("schedule.selector_label", l),
-        this.scheduleSelectorEntity ? this._getSelectorValueText(l) : "",
+        "",
         localize("schedule.selector_warning", l),
         (value) => this._onSelectorEntityChange(value),
       )}
-      ${this._renderTemperatureInputs(l)}
-      ${this.showPreheat
-        ? html`<rs-toggle-row
-            class="preheat-toggle"
-            .label=${localize("schedule.preheat_label", l)}
-            .hint=${localize("schedule.preheat_hint", l)}
-            .checked=${this.preheatEnabled}
-            @toggle-changed=${this._onPreheatToggle}
-          ></rs-toggle-row>`
-        : nothing}
-      <rs-toggle-row
-        class="follow-device-toggle"
-        .label=${localize("schedule.follow_device_setpoint_label", l)}
-        .hint=${localize("schedule.follow_device_setpoint_hint", l)}
-        .checked=${this.followDeviceSetpoint}
-        @toggle-changed=${this._onFollowDeviceSetpointToggle}
-      ></rs-toggle-row>
     `;
   }
 
-  private _onFollowDeviceSetpointToggle(e: CustomEvent<boolean>) {
-    e.stopPropagation();
-    this.dispatchEvent(
-      new CustomEvent("follow-device-setpoint-changed", {
-        detail: { value: e.detail },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+  /**
+   * Ways to give the room a schedule: create one here (admins), or pick an existing Home
+   * Assistant schedule helper.
+   */
+  private _renderAddSource() {
+    const l = this.hass.language;
+    const usedIds = new Set(this.schedules.map((s) => s.entity_id));
+    return html`
+      ${isAdmin(this.hass) ? this._renderCreate() : nothing}
+      ${this._renderAddRow(
+        localize("schedule_editor.add_existing", l),
+        this._getAvailableEntities(usedIds),
+        (eid) => this._addSchedule(eid),
+      )}
+    `;
   }
 
-  private _onPreheatToggle(e: CustomEvent<boolean>) {
-    e.stopPropagation();
+  private _renderCreate() {
+    const l = this.hass.language;
+    if (!this._creating) {
+      return html`<rs-list-row
+        class="create-row"
+        clickable
+        plain-icon
+        variant="primary"
+        icon="mdi:plus"
+        .heading=${localize("schedule_editor.create", l)}
+        @row-click=${this._startCreate}
+      ></rs-list-row>`;
+    }
+    return html`<rs-schedule-create
+      .hass=${this.hass}
+      .defaultName=${this.roomName}
+      @create-cancelled=${() => (this._creating = false)}
+      @schedule-created=${(e: CustomEvent<{ entityId: string }>) => {
+        this._creating = false;
+        this._emitSchedules([...this.schedules, { entity_id: e.detail.entityId }]);
+        this._openEditor(e.detail.entityId);
+      }}
+    ></rs-schedule-create>`;
+  }
+
+  private _startCreate() {
+    this._creating = true;
+  }
+
+  /** "Edit" for storage helpers (admins), "View" for YAML helpers and non-admins. */
+  private _renderEditorButton(entityId: string) {
+    const l = this.hass.language;
+    const edit = isAdmin(this.hass) && isEditableSchedule(this.hass, entityId);
+    if (!this.hass.states[entityId]) return nothing;
+    return html`<ha-button appearance="outlined" @click=${() => this._openEditor(entityId)}>
+      <ha-icon slot="start" .icon=${edit ? "mdi:pencil" : "mdi:eye-outline"}></ha-icon>
+      ${localize(edit ? "schedule_editor.edit" : "schedule_editor.view", l)}
+    </ha-button>`;
+  }
+
+  private _openEditor(entityId: string) {
     this.dispatchEvent(
-      new CustomEvent("preheat-changed", {
-        detail: { value: e.detail },
+      new CustomEvent("open-schedule-editor", {
+        detail: { entityId },
         bubbles: true,
         composed: true,
       }),
@@ -384,58 +484,22 @@ export class RsScheduleSettings extends RsScheduleBase {
             <div class="schedule-row ${state}">
               ${count >= 2 ? html`<span class="schedule-number">${index + 1}</span>` : nothing}
               <span class="schedule-status-dot"></span>
-              <span class="schedule-name">${this._getScheduleLabel(schedule)}</span>
-              <span class="schedule-status">${this._getStatusText(index, state)}</span>
-              ${isInlineSchedule(schedule)
-                ? html`
-                    <ha-icon-button
-                      .path=${RsScheduleSettings.ICON_EDIT}
-                      .label=${localize("schedule.editor_edit_blocks", l)}
-                      @click=${() =>
-                        (this._editingBlocksIndex =
-                          this._editingBlocksIndex === index ? -1 : index)}
-                    ></ha-icon-button>
-                  `
-                : html`
-                    <ha-icon-button
-                      .path=${RsScheduleSettings.ICON_IMPORT}
-                      .label=${localize("schedule.editor_import", l)}
-                      .disabled=${this._importingIndex === index}
-                      @click=${() => this._importSchedule(index)}
-                    ></ha-icon-button>
-                  `}
+              <span class="schedule-name">${this._getFriendlyName(schedule.entity_id)}</span>
+              <span class="schedule-status"
+                >${[this._getStatusText(index, state), this._usage(schedule.entity_id)]
+                  .filter(Boolean)
+                  .join(" · ")}</span
+              >
+              ${this._renderEditorButton(schedule.entity_id)}
               ${this._renderScheduleControls(
                 index,
                 count,
                 (i, dir) => this._moveSchedule(i, dir),
                 (i) => this._removeSchedule(i),
+                this._getFriendlyName(schedule.entity_id),
               )}
             </div>
             ${this._renderRejectedTempWarning(state)}
-            ${this._editingBlocksIndex === index && isInlineSchedule(schedule)
-              ? html`
-                  <div class="blocks-editor">
-                    <ha-textfield
-                      .label=${localize("schedule.editor_name", l)}
-                      .value=${schedule.name ?? ""}
-                      @change=${(event: Event) =>
-                        this._patchSchedule(index, {
-                          name: (event.target as HTMLElement & { value: string }).value,
-                        })}
-                    ></ha-textfield>
-                    <rs-schedule-editor
-                      .hass=${this.hass}
-                      .blocks=${schedule.blocks ?? emptyBlocks()}
-                      .climateMode=${this.climateMode}
-                      .devices=${this.devices}
-                      @blocks-changed=${(event: CustomEvent<{ value: ScheduleBlocks }>) => {
-                        event.stopPropagation();
-                        this._patchSchedule(index, { blocks: event.detail.value });
-                      }}
-                    ></rs-schedule-editor>
-                  </div>
-                `
-              : nothing}
           `;
         })}
       </div>
@@ -449,14 +513,14 @@ export class RsScheduleSettings extends RsScheduleBase {
    * visible at any time of day — not just while that block is running. The scan
    * covers the active schedule only, hence the warning hangs off that row.
    */
-  private _renderRejectedTempWarning(state: "active" | "inactive" | "unreachable") {
+  private _renderRejectedTempWarning(state: "active" | "inactive" | "unreachable", inList = false) {
     if (state !== "active") return nothing;
     const warnings = this.scheduleTempWarnings ?? [];
     if (warnings.length === 0) return nothing;
 
     const range = tempRange(MIN_TARGET_TEMP_C, MAX_TARGET_TEMP_C, this.hass);
     return html`
-      <div class="inline-warning">
+      <div class="inline-warning ${inList ? "in-list" : ""}">
         <ha-icon icon="mdi:alert-outline"></ha-icon>
         ${localize("schedule.block_temp_rejected", this.hass.language, {
           values: warnings.map((w) => this._formatWarning(w)).join(", "),
@@ -484,121 +548,32 @@ export class RsScheduleSettings extends RsScheduleBase {
     return `${w.value} (${when})`;
   }
 
-  // ─── Temperature inputs ────────────────────────────────────────
-
-  private _renderTemperatureInputs(l: string) {
-    if (this.climateMode === "auto") {
-      return html`
-        <div class="temp-grid-auto">
-          <div class="temp-grid-header"></div>
-          <div class="temp-grid-header">${localize("schedule.column_comfort", l)}</div>
-          <div class="temp-grid-header">${localize("schedule.column_eco", l)}</div>
-          <div class="temp-grid-row-label">
-            <ha-icon icon="mdi:fire" style="--mdc-icon-size:16px"></ha-icon>
-            ${localize("schedule.row_heat", l)}
-          </div>
-          <ha-textfield
-            type="number"
-            .value=${String(toDisplay(this.comfortHeat, this.hass))}
-            suffix=${tempUnit(this.hass)}
-            step=${tempStep(this.hass)}
-            min=${tempRange(5, 35, this.hass).min}
-            max=${tempRange(5, 35, this.hass).max}
-            @change=${this._onComfortHeatChange}
-          ></ha-textfield>
-          <ha-textfield
-            type="number"
-            .value=${String(toDisplay(this.ecoHeat, this.hass))}
-            suffix=${tempUnit(this.hass)}
-            step=${tempStep(this.hass)}
-            min=${tempRange(5, 35, this.hass).min}
-            max=${tempRange(5, 35, this.hass).max}
-            @change=${this._onEcoHeatChange}
-          ></ha-textfield>
-          <div class="temp-grid-row-label">
-            <ha-icon icon="mdi:snowflake" style="--mdc-icon-size:16px"></ha-icon>
-            ${localize("schedule.row_cool", l)}
-          </div>
-          <ha-textfield
-            type="number"
-            .value=${String(toDisplay(this.comfortCool, this.hass))}
-            suffix=${tempUnit(this.hass)}
-            step=${tempStep(this.hass)}
-            min=${tempRange(5, 35, this.hass).min}
-            max=${tempRange(5, 35, this.hass).max}
-            @change=${this._onComfortCoolChange}
-          ></ha-textfield>
-          <ha-textfield
-            type="number"
-            .value=${String(toDisplay(this.ecoCool, this.hass))}
-            suffix=${tempUnit(this.hass)}
-            step=${tempStep(this.hass)}
-            min=${tempRange(5, 35, this.hass).min}
-            max=${tempRange(5, 35, this.hass).max}
-            @change=${this._onEcoCoolChange}
-          ></ha-textfield>
-        </div>
-      `;
-    }
-
-    return html`
-      <div class="temp-inputs">
-        <div class="temp-input-group">
-          <ha-textfield
-            type="number"
-            label=${localize("schedule.comfort_label", l)}
-            suffix=${tempUnit(this.hass)}
-            step=${tempStep(this.hass)}
-            .value=${String(
-              toDisplay(
-                this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
-                this.hass,
-              ),
-            )}
-            min=${tempRange(5, 35, this.hass).min}
-            max=${tempRange(5, 35, this.hass).max}
-            @change=${this.climateMode === "cool_only"
-              ? this._onComfortCoolChange
-              : this._onComfortHeatChange}
-          ></ha-textfield>
-        </div>
-        <div class="temp-input-group">
-          <ha-textfield
-            type="number"
-            label=${localize("schedule.eco_label", l)}
-            suffix=${tempUnit(this.hass)}
-            step=${tempStep(this.hass)}
-            .value=${String(
-              toDisplay(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass),
-            )}
-            min=${tempRange(5, 35, this.hass).min}
-            max=${tempRange(5, 35, this.hass).max}
-            @change=${this.climateMode === "cool_only"
-              ? this._onEcoCoolChange
-              : this._onEcoHeatChange}
-          ></ha-textfield>
-        </div>
-      </div>
-      <div class="fallback-hint">${localize("schedule.comfort_hint", l)}</div>
-    `;
-  }
-
-  // ─── Selector value text ───────────────────────────────────────
-
-  private _getSelectorValueText(l: string): string {
-    const selectorState = this.hass?.states?.[this.scheduleSelectorEntity];
-    if (!selectorState) return "";
-    if (this.scheduleSelectorEntity.startsWith("input_boolean.")) {
-      return localize("schedule.selector_value_boolean", l, {
-        value: selectorState.state === "on" ? "On" : "Off",
-      });
-    }
-    return localize("schedule.selector_value_number", l, {
-      value: selectorState.state,
-    });
-  }
-
   // ─── Status text (temperature-specific) ────────────────────────
+
+  /**
+   * Read the active block's temperatures from the schedule entity's attributes.
+   *
+   * Implausible values are dropped by the backend (#395), so they must not be
+   * shown as the active target here either. The *warning* about them comes from
+   * `scheduleTempWarnings` instead — the backend scans the whole week, while
+   * these attributes only ever describe the block running right now.
+   */
+  private _readBlockTemps(index: number): {
+    blockTemp?: number;
+    heatTemp?: number;
+    coolTemp?: number;
+  } {
+    const entityState = this.hass?.states?.[this.schedules[index].entity_id];
+    const attrs = entityState?.attributes ?? {};
+    const usable = (v: unknown): number | undefined =>
+      v != null && isPlausibleTargetTemp(v, this.hass) ? (v as number) : undefined;
+
+    return {
+      blockTemp: usable(attrs.temperature),
+      heatTemp: usable(attrs.heat_temperature),
+      coolTemp: usable(attrs.cool_temperature),
+    };
+  }
 
   private _getStatusText(index: number, state: "active" | "inactive" | "unreachable"): string {
     const l = this.hass.language;
@@ -607,178 +582,42 @@ export class RsScheduleSettings extends RsScheduleBase {
     if (state === "inactive") return localize("schedule.state_inactive", l);
 
     const schedule = this.schedules[index];
-    if (isInlineSchedule(schedule)) {
-      return this._blockStatusText(findActiveBlock(schedule.blocks)?.data ?? null, l);
-    }
-    const entityState = this.hass?.states?.[schedule.entity_id!];
+    const entityState = this.hass?.states?.[schedule.entity_id];
     if (!entityState) return localize("schedule.state_active", l);
 
-    return this._blockStatusText(
-      entityState.state === "on" ? (entityState.attributes ?? {}) : null,
-      l,
-    );
-  }
+    const unit = tempUnit(this.hass);
+    // Block temperatures are entity attributes (display units); comfort/eco are °C
+    const shown = (v: number) => formatNumber(v, this.hass, 0, 1);
+    const fmt = (c: number) => formatTempLocale(c, this.hass, 0, 1);
+    const band = (heat: string, cool: string) =>
+      this.climateMode === "auto"
+        ? `${heat}–${cool}\u00a0${unit}`
+        : `${this.climateMode === "cool_only" ? cool : heat}\u00a0${unit}`;
 
-  /** Render the active block's temperatures; `null` data means the schedule is off. */
-  private _blockStatusText(data: ScheduleBlockData | null, l: string): string {
-    if (data === null) {
-      return localize("schedule.eco_detail", l, {
-        temp: formatTemp(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass),
-        unit: tempUnit(this.hass),
+    if (entityState.state === "on") {
+      const { blockTemp, heatTemp, coolTemp } = this._readBlockTemps(index);
+      if (blockTemp != null) {
+        return localize("schedule.from_schedule", l, { temp: `${shown(blockTemp)}\u00a0${unit}` });
+      }
+      if (heatTemp != null || coolTemp != null) {
+        return localize("schedule.from_schedule", l, {
+          temp: band(
+            heatTemp != null ? shown(heatTemp) : fmt(this.comfortHeat),
+            coolTemp != null ? shown(coolTemp) : fmt(this.comfortCool),
+          ),
+        });
+      }
+      return localize("schedule.fallback", l, {
+        temp: band(fmt(this.comfortHeat), fmt(this.comfortCool)),
       });
     }
-
-    const isUsable = (value: number | null | undefined): value is number =>
-      value != null && value >= MIN_TARGET_TEMP_C && value <= MAX_TARGET_TEMP_C;
-    if (isUsable(data.temperature)) {
-      return localize("schedule.from_schedule", l, {
-        temp: formatTemp(data.temperature, this.hass),
-        unit: tempUnit(this.hass),
-      });
-    }
-
-    if (data.heat_temperature != null || data.cool_temperature != null) {
-      return localize("schedule.from_schedule_split", l, {
-        heat: formatTemp(data.heat_temperature ?? this.comfortHeat, this.hass),
-        cool: formatTemp(data.cool_temperature ?? this.comfortCool, this.hass),
-        unit: tempUnit(this.hass),
-      });
-    }
-
-    return localize("schedule.fallback", l, {
-      temp: formatTemp(
-        this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat,
-        this.hass,
-      ),
-      unit: tempUnit(this.hass),
+    if (this.scheduleOffAction === "off") return localize("schedule.off_detail", l);
+    return localize("schedule.eco_detail", l, {
+      temp: band(fmt(this.ecoHeat), fmt(this.ecoCool)),
     });
   }
 
-  private static readonly ICON_IMPORT =
-    "M13,5V11H14.17L12,13.17L9.83,11H11V5H13M15,3H9V9H5L12,16L19,9H15V3M19,18H5V20H19V18Z";
-
-  private static readonly ICON_EDIT =
-    "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z";
-
   // ─── Schedule management ───────────────────────────────────────
-
-  /** Inline schedules defined in other rooms, offered as copy sources. */
-  private get _copySources(): { key: string; label: string; schedule: ScheduleEntry }[] {
-    return Object.entries(this.rooms)
-      .filter(([areaId]) => areaId !== this.areaId)
-      .flatMap(([areaId, room]) =>
-        (room.schedules ?? []).filter(isInlineSchedule).map((schedule, index) => ({
-          key: `${areaId}:${index}`,
-          label: `${this._getRoomLabel(areaId, room)} — ${schedule.name || localize("schedule.editor_untitled", this.hass.language)}`,
-          schedule,
-        })),
-      );
-  }
-
-  private _getRoomLabel(areaId: string, room: RoomConfig): string {
-    return room.display_name || this.hass?.areas?.[areaId]?.name || areaId;
-  }
-
-  private _renderCopyRow(l: string) {
-    const sources = this._copySources;
-    if (sources.length === 0) return nothing;
-
-    return html`
-      <div class="add-schedule-row">
-        <ha-select
-          .value=${""}
-          .label=${localize("schedule.editor_copy_from_room", l)}
-          .options=${sources.map(({ key, label }) => ({ value: key, label }))}
-          @selected=${(event: Event) => {
-            const key = getSelectValue(event);
-            if (key) this._copyScheduleFrom(key);
-            requestAnimationFrame(() => {
-              (event.target as HTMLElement & { value: string }).value = "";
-            });
-          }}
-          @closed=${(event: Event) => event.stopPropagation()}
-          fixedMenuPosition
-          naturalMenuWidth
-        >
-          ${sources.map(
-            ({ key, label }) => html`<ha-list-item value=${key}>${label}</ha-list-item>`,
-          )}
-        </ha-select>
-      </div>
-    `;
-  }
-
-  /** Copies the blocks, so the two schedules diverge freely afterwards. */
-  private _copyScheduleFrom(key: string): void {
-    const source = this._copySources.find((candidate) => candidate.key === key);
-    if (!source?.schedule.blocks) return;
-
-    this._editingBlocksIndex = this.schedules.length;
-    this._emitSchedules([
-      ...this.schedules,
-      {
-        name: source.schedule.name || localize("schedule.editor_untitled", this.hass.language),
-        blocks: stripInapplicableData(
-          structuredClone(source.schedule.blocks),
-          this.devices.map((device) => device.type),
-        ),
-      },
-    ]);
-  }
-
-  private _getScheduleLabel(schedule: ScheduleEntry): string {
-    if (isInlineSchedule(schedule)) {
-      return schedule.name || localize("schedule.editor_untitled", this.hass.language);
-    }
-    return this._getFriendlyName(schedule.entity_id!);
-  }
-
-  private _addInlineSchedule() {
-    this._editingBlocksIndex = this.schedules.length;
-    this._emitSchedules([
-      ...this.schedules,
-      {
-        name: localize("schedule.editor_untitled", this.hass.language),
-        blocks: emptyBlocks(),
-      },
-    ]);
-  }
-
-  /**
-   * Copy a helper's weekly blocks into an inline schedule. The helper is left
-   * in place, so an unwanted import is undone by re-adding it.
-   */
-  private async _importSchedule(index: number) {
-    const entityId = this.schedules[index]?.entity_id;
-    if (!entityId) return;
-
-    this._importingIndex = index;
-    this._importError = "";
-    try {
-      const imported = await this.hass.callWS<{ name: string; blocks: ScheduleBlocks }>({
-        type: "roommind/schedule/import",
-        entity_id: entityId,
-      });
-      this._emitSchedules(
-        this.schedules.map((schedule, scheduleIndex) =>
-          scheduleIndex === index ? { name: imported.name, blocks: imported.blocks } : schedule,
-        ),
-      );
-      this._editingBlocksIndex = index;
-    } catch (error) {
-      this._importError = error instanceof Error ? error.message : String(error);
-    } finally {
-      this._importingIndex = -1;
-    }
-  }
-
-  private _patchSchedule(index: number, patch: Partial<ScheduleEntry>) {
-    this._emitSchedules(
-      this.schedules.map((schedule, scheduleIndex) =>
-        scheduleIndex === index ? { ...schedule, ...patch } : schedule,
-      ),
-    );
-  }
 
   private _addSchedule(entityId: string) {
     this._emitSchedules([...this.schedules, { entity_id: entityId }]);
@@ -814,92 +653,6 @@ export class RsScheduleSettings extends RsScheduleBase {
         composed: true,
       }),
     );
-  }
-
-  // ─── Temperature change handlers ──────────────────────────────
-
-  private _onComfortHeatChange(e: Event) {
-    const target = e.target as HTMLElement & { value: string };
-    const val = toCelsius(parseFloat(target.value) || toDisplay(21.0, this.hass), this.hass);
-    this.dispatchEvent(
-      new CustomEvent("comfort-heat-changed", {
-        detail: { value: val },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-    if (this.comfortCool < val) {
-      this.dispatchEvent(
-        new CustomEvent("comfort-cool-changed", {
-          detail: { value: val },
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    }
-  }
-
-  private _onComfortCoolChange(e: Event) {
-    const target = e.target as HTMLElement & { value: string };
-    const val = toCelsius(parseFloat(target.value) || toDisplay(24.0, this.hass), this.hass);
-    this.dispatchEvent(
-      new CustomEvent("comfort-cool-changed", {
-        detail: { value: val },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-    if (this.comfortHeat > val) {
-      this.dispatchEvent(
-        new CustomEvent("comfort-heat-changed", {
-          detail: { value: val },
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    }
-  }
-
-  private _onEcoHeatChange(e: Event) {
-    const target = e.target as HTMLElement & { value: string };
-    const val = toCelsius(parseFloat(target.value) || toDisplay(17.0, this.hass), this.hass);
-    this.dispatchEvent(
-      new CustomEvent("eco-heat-changed", {
-        detail: { value: val },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-    if (this.ecoCool < val) {
-      this.dispatchEvent(
-        new CustomEvent("eco-cool-changed", {
-          detail: { value: val },
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    }
-  }
-
-  private _onEcoCoolChange(e: Event) {
-    const target = e.target as HTMLElement & { value: string };
-    const val = toCelsius(parseFloat(target.value) || toDisplay(27.0, this.hass), this.hass);
-    this.dispatchEvent(
-      new CustomEvent("eco-cool-changed", {
-        detail: { value: val },
-        bubbles: true,
-        composed: true,
-      }),
-    );
-    if (this.ecoHeat > val) {
-      this.dispatchEvent(
-        new CustomEvent("eco-heat-changed", {
-          detail: { value: val },
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    }
   }
 }
 
