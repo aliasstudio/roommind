@@ -146,6 +146,9 @@ export class RsOverrideSection extends LitElement {
       },
       { value: "boost", label: localize("override.comfort", l), icon: "mdi:sofa" },
       { value: "eco", label: localize("override.eco", l), icon: "mdi:leaf" },
+      ...(this.climateMode === "heat_only"
+        ? []
+        : [{ value: "turbo", label: localize("override.turbo", l), icon: "mdi:snowflake" }]),
       { value: "custom", label: localize("override.custom", l), icon: "mdi:thermometer" },
     ].map((o) => ({ ...o, disabled: locked(o.value) }));
 

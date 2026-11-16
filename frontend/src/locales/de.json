@@ -30,6 +30,7 @@
   "room.alias.clear": "Auf Bereichsname zurücksetzen",
   "override.comfort": "Komfort",
   "override.eco": "Eco",
+  "override.turbo": "Turbo",
   "override.custom": "Individuell",
   "override.target": "Ziel",
   "override.heat_to": "Heizen bis",

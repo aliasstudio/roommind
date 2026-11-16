@@ -56,6 +56,8 @@ export function overrideBand(
   temps: RoomTemps,
   custom: { heat: number; cool: number },
 ): { heat: number | null; cool: number | null } {
+  // The backend resolves turbo to the coldest setpoint the room's ACs accept.
+  if (type === "turbo") return { heat: null, cool: null };
   let heat: number | null;
   let cool: number | null;
   if (type === "boost") {

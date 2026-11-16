@@ -198,6 +198,7 @@ export interface RoomHintContext {
 const OVERRIDE_TYPE_KEYS: Record<OverrideType, TranslationKey> = {
   boost: "override.comfort",
   eco: "override.eco",
+  turbo: "override.turbo",
   custom: "override.custom",
 };
 
@@ -575,5 +576,6 @@ export function targetReason(
 const OVERRIDE_ICONS: Record<OverrideType, string> = {
   boost: "mdi:sofa",
   eco: "mdi:leaf",
+  turbo: "mdi:snowflake",
   custom: "mdi:thermometer",
 };

@@ -57,6 +57,7 @@ const TEMPS_SAVE_DELAY_MS = 800;
 const OVERRIDE_KEYS: Record<OverrideType, TranslationKey> = {
   boost: "override.comfort",
   eco: "override.eco",
+  turbo: "override.turbo",
   custom: "override.custom",
 };
 
@@ -64,6 +65,7 @@ const OVERRIDE_KEYS: Record<OverrideType, TranslationKey> = {
 const QUICK_OF: Record<OverrideType, QuickValue | "custom"> = {
   boost: "comfort",
   eco: "eco",
+  turbo: "custom",
   custom: "custom",
 };
 
