@@ -18,13 +18,7 @@ export interface NotificationTarget {
 }
 
 export interface ScheduleEntry {
-  /** Absent on an inline schedule (stored in RoomMind, from before 2.0). */
   entity_id: string;
-  name?: string;
-  blocks?: Record<
-    string,
-    { from: string; to: string; data?: Record<string, string | number | boolean> }[]
-  >;
 }
 
 export interface CoverScheduleEntry {
