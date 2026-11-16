@@ -35,6 +35,7 @@ import {
   withPosition,
   withPositions,
   withTemps,
+  type BlockDataPatch,
   type ScheduleBlock,
   type Week,
 } from "../../utils/schedule-week";
@@ -1260,7 +1261,9 @@ export class RsScheduleEditor extends LitElement {
       .blockKey=${open.key}
       .cover=${this._cover}
       .gateOnly=${this._cover && users.length > 0 && users.every((u) => u.coverMode === "gate")}
+      .devices=${modeRooms.flatMap((room) => room.devices ?? [])}
       @block-position=${this._onFormPosition}
+      @block-data=${this._onFormData}
       @block-times=${this._onFormTimes}
       @block-split=${this._onFormSplit}
       @block-temps=${this._onFormTemps}
@@ -1453,6 +1456,28 @@ export class RsScheduleEditor extends LitElement {
       start: block.start,
       end: block.end,
       data: withPosition(block.data, e.detail.position),
+    };
+    this._change(
+      this._week.map((day, d) =>
+        d === open.day ? day.map((b, i) => (i === open.index ? nextBlock : b)) : day,
+      ),
+    );
+  }
+
+  private _onFormData(e: CustomEvent<{ patch: BlockDataPatch }>) {
+    const open = this._open;
+    if (!open) return;
+    const block = this._week[open.day][open.index];
+    if (!block) return;
+    const data = Object.fromEntries(
+      Object.entries({ ...block.data, ...e.detail.patch }).filter(
+        (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
+      ),
+    );
+    const nextBlock: ScheduleBlock = {
+      start: block.start,
+      end: block.end,
+      ...(Object.keys(data).length > 0 ? { data } : {}),
     };
     this._change(
       this._week.map((day, d) =>
