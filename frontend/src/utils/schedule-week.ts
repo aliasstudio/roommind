@@ -23,6 +23,8 @@ export const SNAP_MINUTES = 15;
 export const MIN_BLOCK_MINUTES = SNAP_MINUTES;
 
 export type BlockData = Record<string, string | number | boolean>;
+/** Block data changes; undefined drops the key. */
+export type BlockDataPatch = Record<string, string | number | boolean | undefined>;
 
 export interface ScheduleBlock {
   start: number;

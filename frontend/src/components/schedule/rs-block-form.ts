@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant } from "../../types";
+import type { DeviceConfig, HomeAssistant } from "../../types";
+import { SWING_MODE_KEYS, fanModeLabel } from "../../utils/device-utils";
 import { localize } from "../../utils/localize";
 import { tokens } from "../../styles/tokens";
 import { tempRowStyles } from "../../styles/temp-row-styles";
@@ -22,11 +23,24 @@ import {
   hm,
   roundToStep,
   usesComfort,
+  type BlockDataPatch,
   type ScheduleBlock,
 } from "../../utils/schedule-week";
 import "../shared/rs-segmented";
 import "../shared/rs-stepper";
 import "../shared/rs-number-field";
+import "../shared/rs-list-row";
+
+const DEVICE_TYPES = ["ac", "trv"] as const;
+type DeviceType = (typeof DEVICE_TYPES)[number];
+
+const IDLE_ACTIONS_BY_TYPE = {
+  ac: ["off", "fan_only", "setback"],
+  trv: ["off", "low", "setback"],
+} as const satisfies Record<DeviceType, readonly string[]>;
+
+const FAN_CONTROLS = ["off", "fixed", "auto"] as const;
+const FAN_BOUND_KEYS = ["fan_min_mode", "fan_max_mode"] as const;
 
 export interface BlockTempChange {
   heat?: number;
@@ -38,7 +52,7 @@ export interface BlockTempChange {
  * temperature, delete. Applies every valid change at once (no save button):
  * `block-times` `{ start, end }`, `block-split` `{ start, endNextDay }` for a range past
  * midnight, `block-temps` `{ temps }` (null = comfort, else only the sides that changed),
- * `block-delete`, `block-done`. A cover schedule's block (`cover`) has a position instead of a
+ * `block-data` `{ patch }` (device settings, undefined drops a key), `block-delete`, `block-done`. A cover schedule's block (`cover`) has a position instead of a
  * temperature: `block-position` `{ position }`.
  * Events bubble but are not composed: the editor listens on the form itself.
  */
@@ -61,6 +75,8 @@ export class RsBlockForm extends LitElement {
   @property({ type: Boolean }) public cover = false;
   /** Every room uses the cover schedule only to allow shading: the position does not count. */
   @property({ type: Boolean }) public gateOnly = false;
+  /** Devices of the rooms using the schedule: which device settings the block offers. */
+  @property({ attribute: false }) public devices: DeviceConfig[] = [];
 
   @state() private _start = 0;
   @state() private _end = 60;
@@ -221,7 +237,7 @@ export class RsBlockForm extends LitElement {
             </div>`
           : nothing
       }
-      ${this.cover ? this._renderPosition() : this._renderTemperature()}
+      ${this.cover ? this._renderPosition() : html`${this._renderTemperature()}${this._renderDeviceFields()}`}
       <div class="footer">
         <ha-button variant="danger" appearance="plain" @click=${this._onDelete}>
           <ha-icon slot="start" icon="mdi:delete-outline"></ha-icon>
@@ -325,6 +341,138 @@ export class RsBlockForm extends LitElement {
           : nothing
       }
     `;
+  }
+
+  /** Settings the block gives the devices of the rooms using the schedule; "" inherits the device's own. */
+  private _renderDeviceFields() {
+    const l = this.hass.language;
+    const types = DEVICE_TYPES.filter((type) =>
+      this.devices.some((device) => device.type === type),
+    );
+    if (types.length === 0) return nothing;
+    const data = this.block.data ?? {};
+    const text = (key: string): string => {
+      const value = data[key];
+      return typeof value === "string" ? value : "";
+    };
+    const modesOf = (attribute: "fan_modes" | "swing_modes"): string[] => [
+      ...new Set(
+        this.devices.flatMap(
+          (device) =>
+            (this.hass.states[device.entity_id]?.attributes?.[attribute] ?? []) as string[],
+        ),
+      ),
+    ];
+    const fanOptions = modesOf("fan_modes").map((mode) => ({
+      value: mode,
+      label: fanModeLabel(this.hass, mode),
+    }));
+    const swingOptions = modesOf("swing_modes").map((mode) => ({ value: mode, label: mode }));
+    return html`<div class="section">
+      <p class="section-title">${localize("schedule.editor_advanced", l)}</p>
+      ${types.map((type) =>
+        this._renderSelect(
+          localize(`schedule.editor_idle_action_${type}`, l),
+          text(`${type}_idle_action`) || text("idle_action"),
+          IDLE_ACTIONS_BY_TYPE[type].map((action) => ({
+            value: action,
+            label: localize(`devices.idle_action_${action}`, l),
+          })),
+          (value) => this._patchIdleAction(type, value),
+        ),
+      )}
+      ${
+        types.includes("ac")
+          ? html`${this._renderSelect(
+                localize("schedule.editor_idle_fan_mode", l),
+                text("idle_fan_mode"),
+                fanOptions,
+                (value) => this._patchData({ idle_fan_mode: value }),
+              )}
+              ${this._renderSelect(
+                localize("schedule.editor_fan_control", l),
+                text("fan_control"),
+                FAN_CONTROLS.map((control) => ({
+                  value: control,
+                  label: localize(`devices.fan_control_${control}`, l),
+                })),
+                (value) => this._patchData({ fan_control: value }),
+              )}
+              ${FAN_BOUND_KEYS.map((key) =>
+                this._renderSelect(
+                  localize(`schedule.editor_${key}`, l),
+                  text(key),
+                  fanOptions,
+                  (value) => this._patchData({ [key]: value }),
+                ),
+              )}
+              ${
+                swingOptions.length > 0
+                  ? SWING_MODE_KEYS.map((key) =>
+                      this._renderSelect(
+                        localize(`schedule.editor_${key}`, l),
+                        text(key),
+                        swingOptions,
+                        (value) => this._patchData({ [key]: value }),
+                      ),
+                    )
+                  : nothing
+              }
+              <rs-list-row
+                switch
+                wrap
+                .heading=${localize("schedule.editor_dehumidify", l)}
+                .checked=${data.dehumidify !== false}
+                @toggle-changed=${(e: CustomEvent<boolean>) =>
+                  this._patchData({ dehumidify: e.detail ? undefined : false })}
+              ></rs-list-row>`
+          : nothing
+      }
+    </div>`;
+  }
+
+  /** A stored value the devices no longer offer stays visible instead of reading as inherit. */
+  private _renderSelect(
+    label: string,
+    value: string,
+    options: { value: string; label: string }[],
+    onPick: (value: string | undefined) => void,
+  ) {
+    const l = this.hass.language;
+    const isForeign = value !== "" && !options.some((option) => option.value === value);
+    return html`<label>
+      ${label}
+      <select
+        style=${`color-scheme: ${this.hass.themes?.darkMode ? "dark" : "light"}`}
+        @change=${(e: Event) => onPick((e.target as HTMLSelectElement).value || undefined)}
+      >
+        <option value="" ?selected=${value === ""}>
+          ${localize("schedule.editor_inherit", l)}
+        </option>
+        ${options.map(
+          (option) =>
+            html`<option value=${option.value} ?selected=${option.value === value}>
+              ${option.label}
+            </option>`,
+        )}
+        ${isForeign ? html`<option value=${value} selected>${value}</option>` : nothing}
+      </select>
+    </label>`;
+  }
+
+  /** One type's idle action pins the other's too and drops the shared `idle_action` fallback. */
+  private _patchIdleAction(type: DeviceType, value: string | undefined) {
+    const data = this.block.data ?? {};
+    const other = type === "ac" ? "trv" : "ac";
+    this._patchData({
+      [`${type}_idle_action`]: value,
+      [`${other}_idle_action`]: data[`${other}_idle_action`] ?? data.idle_action,
+      idle_action: undefined,
+    });
+  }
+
+  private _patchData(patch: BlockDataPatch) {
+    this._fire("block-data", { patch });
   }
 
   private _comfortHint() {
