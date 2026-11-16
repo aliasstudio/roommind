@@ -543,14 +543,17 @@ export class RsRoomHero extends LitElement {
         );
       }
       if (live.active_heat_sources && live.active_heat_sources !== "none") {
+        // The labels name the radiator as primary; a room led by its AC has the roles swapped.
+        const isAcLead = this.config?.heat_source_primary === "ac";
+        const radiatorSide = isAcLead ? "secondary" : "primary";
         facts.push(
           html`<span
             ><ha-icon icon="mdi:swap-horizontal" aria-hidden="true"></ha-icon>${localize(
-              live.active_heat_sources === "primary"
-                ? "hero.heat_source_primary"
-                : live.active_heat_sources === "secondary"
-                  ? "hero.heat_source_secondary"
-                  : "hero.heat_source_both",
+              live.active_heat_sources === "both"
+                ? "hero.heat_source_both"
+                : live.active_heat_sources === radiatorSide
+                  ? "hero.heat_source_primary"
+                  : "hero.heat_source_secondary",
               l,
             )}</span
           >`,

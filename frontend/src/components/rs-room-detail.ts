@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type {
+  HeatSourcePrimary,
   HomeAssistant,
   HassArea,
   RoomConfig,
@@ -198,6 +199,11 @@ const ROOM_FIELDS: [string, RoomFieldSync][] = [
     "heat_source_ac_min_outdoor",
     plain("_heatSourceAcMinOutdoor", (c) => c?.heat_source_ac_min_outdoor ?? -15.0),
   ],
+  ["heat_source_primary", plain("_heatSourcePrimary", (c) => c?.heat_source_primary ?? "trv")],
+  [
+    "heat_source_assist_percent",
+    plain("_heatSourceAssistPercent", (c) => c?.heat_source_assist_percent ?? 0),
+  ],
   [
     "heat_source_price_aware",
     plain("_heatSourcePriceAware", (c) => c?.heat_source_price_aware ?? false),
@@ -248,6 +254,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _followDeviceSetpoint = false;
   @state() private _priceShift = 0;
   @state() private _heatSourcePriceAware = false;
+  @state() private _heatSourcePrimary: HeatSourcePrimary = "trv";
+  @state() private _heatSourceAssistPercent = 0;
   @state() private _occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
   @state() private _co2Sensor = "";
   @state() private _co2Threshold = DEFAULT_CO2_THRESHOLD;
@@ -758,6 +766,8 @@ export class RsRoomDetail extends LitElement {
                 .outdoorThreshold=${this._heatSourceOutdoorThreshold}
                 .acMinOutdoor=${this._heatSourceAcMinOutdoor}
                 .priceAware=${this._heatSourcePriceAware}
+                .primarySource=${this._heatSourcePrimary}
+                .assistPercent=${this._heatSourceAssistPercent}
                 .priceConfigured=${this.priceConfigured}
                 .outdoorTemp=${this.outdoorTemp}
                 .climateMode=${this._climateMode}
@@ -1079,6 +1089,8 @@ export class RsRoomDetail extends LitElement {
             .outdoorThreshold=${this._heatSourceOutdoorThreshold}
             .acMinOutdoor=${this._heatSourceAcMinOutdoor}
             .priceAware=${this._heatSourcePriceAware}
+            .primarySource=${this._heatSourcePrimary}
+            .assistPercent=${this._heatSourceAssistPercent}
             .priceConfigured=${this.priceConfigured}
             .outdoorTemp=${this.outdoorTemp}
             .climateMode=${this._climateMode}
@@ -1415,6 +1427,8 @@ export class RsRoomDetail extends LitElement {
       this._heatSourceOutdoorThreshold = value as number;
     else if (key === "heat_source_ac_min_outdoor") this._heatSourceAcMinOutdoor = value as number;
     else if (key === "heat_source_price_aware") this._heatSourcePriceAware = value as boolean;
+    else if (key === "heat_source_primary") this._heatSourcePrimary = value as HeatSourcePrimary;
+    else if (key === "heat_source_assist_percent") this._heatSourceAssistPercent = value as number;
     this._autoSave();
   }
 

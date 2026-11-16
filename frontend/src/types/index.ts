@@ -6,6 +6,9 @@ export type ClimateMode = "auto" | "heat_only" | "cool_only";
 
 export type RoomMode = "idle" | "heating" | "cooling";
 
+export const HEAT_SOURCE_PRIMARIES = ["trv", "ac"] as const;
+export type HeatSourcePrimary = (typeof HEAT_SOURCE_PRIMARIES)[number];
+
 export type OverrideType = "boost" | "eco" | "turbo" | "custom";
 
 export interface NotificationTarget {
@@ -215,6 +218,8 @@ export interface RoomConfig {
   heat_source_ac_min_outdoor?: number;
   /** Orchestration: expensive electricity prefers the primary source, cheap the AC. */
   heat_source_price_aware?: boolean;
+  heat_source_primary?: HeatSourcePrimary; // which device type leads, default "trv"
+  heat_source_assist_percent?: number; // share of the lead power the idle source runs at, default 0
   climate_control_enabled?: boolean;
   live?: RoomLiveData;
 }
