@@ -1,6 +1,11 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { ClimateMode, HomeAssistant } from "../types";
+import {
+  HEAT_SOURCE_PRIMARIES,
+  type ClimateMode,
+  type HeatSourcePrimary,
+  type HomeAssistant,
+} from "../types";
 import { localize } from "../utils/localize";
 import { tokens } from "../styles/tokens";
 import { formStyles } from "../styles/form-styles";
@@ -9,6 +14,7 @@ import { formatTempLocale, tempUnit, toDisplayDelta } from "../utils/temperature
 import "./shared/rs-number-field";
 import "./shared/rs-info-icon";
 import "./shared/rs-list-row";
+import "./shared/rs-segmented";
 
 /** Mirrors HEAT_SOURCE_HYSTERESIS / HEAT_SOURCE_LARGE_GAP_MULTIPLIER (const.py). */
 const HYSTERESIS_K = 0.3;
@@ -23,6 +29,8 @@ export class RsHeatSourceSection extends LitElement {
   @property({ type: Number }) public acMinOutdoor = -15.0;
   @property({ type: Boolean }) public editing = false;
   @property({ type: Boolean }) public priceAware = false;
+  @property({ type: String }) public primarySource: HeatSourcePrimary = "trv";
+  @property({ type: Number }) public assistPercent = 0;
   /** A price source is set in the settings; without one the option is hidden. */
   @property({ type: Boolean }) public priceConfigured = false;
   /**
@@ -105,6 +113,37 @@ export class RsHeatSourceSection extends LitElement {
         this.enabled
           ? html`<div class="group">
               <h4 class="group-title">${localize("heat_source.group_rules", l)}</h4>
+              <span class="field-label">
+                ${localize("heat_source.primary", l)}
+                <rs-info-icon .text=${localize("heat_source.primary_hint", l)}></rs-info-icon>
+              </span>
+              <rs-segmented
+                wrap
+                .label=${localize("heat_source.primary", l)}
+                .options=${HEAT_SOURCE_PRIMARIES.map((primary) => ({
+                  value: primary,
+                  label: localize(`heat_source.primary_${primary}`, l),
+                }))}
+                .value=${this.primarySource}
+                @value-changed=${(e: CustomEvent<{ value: string }>) => {
+                  e.stopPropagation();
+                  this._emit(
+                    "heat_source_primary",
+                    HEAT_SOURCE_PRIMARIES.find((primary) => primary === e.detail.value),
+                  );
+                }}
+              ></rs-segmented>
+              <rs-number-field
+                .label=${localize("heat_source.assist_percent", l)}
+                .info=${localize("heat_source.assist_percent_hint", l)}
+                suffix="%"
+                .value=${this.assistPercent}
+                .min=${0}
+                .max=${100}
+                .step=${5}
+                @value-changed=${(e: CustomEvent<{ value: number }>) =>
+                  this._emit("heat_source_assist_percent", e.detail.value)}
+              ></rs-number-field>
               <rs-number-field
                 .hass=${this.hass}
                 kind="temperature"
