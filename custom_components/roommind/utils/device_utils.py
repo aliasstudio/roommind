@@ -614,8 +614,6 @@ def room_contributes_to_group(
     room_devices: list[dict],
     member_set: set[str],
     active_heat_sources: str | None,
-    *,
-    ac_is_primary: bool = False,
 ) -> bool:
     """Whether a room's group members are heating-active per orchestration.
 
@@ -629,11 +627,8 @@ def room_contributes_to_group(
     - ``"none"``     -> orchestration chose nothing (delta_t <= 0) ->
                         False (all devices idled by orchestrator).
     - ``"both"``     -> TRV + AC both active -> True.
-    - ``"primary"``  -> only the room's lead type is active.
-    - ``"secondary"``-> only the supplementing type is active.
-
-    ``ac_is_primary`` mirrors the room's ``heat_source_primary`` setting and
-    decides which device type each role maps to.
+    - ``"primary"``  -> only the TRV is active.
+    - ``"secondary"``-> only the AC is active.
 
     Unknown string values -> False (fail-safe: master stays idle).
     """
@@ -644,9 +639,9 @@ def room_contributes_to_group(
     if active_heat_sources == "both":
         return True
     if active_heat_sources == "primary":
-        required_type = DEVICE_TYPE_AC if ac_is_primary else DEVICE_TYPE_TRV
+        required_type = DEVICE_TYPE_TRV
     elif active_heat_sources == "secondary":
-        required_type = DEVICE_TYPE_TRV if ac_is_primary else DEVICE_TYPE_AC
+        required_type = DEVICE_TYPE_AC
     else:
         return False  # defensive: unknown orchestration state
     for dev in room_devices:

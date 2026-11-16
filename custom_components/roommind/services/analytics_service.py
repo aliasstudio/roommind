@@ -19,7 +19,11 @@ from ..const import (
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
     DEFAULT_HEATING_SEASON,
+    DEFAULT_OUTDOOR_COOLING_MIN,
+    DEFAULT_OUTDOOR_HEATING_MAX,
+    HEATING_SYSTEM_RADIATOR,
     MODE_IDLE,
+    is_override_active,
 )
 from ..control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
@@ -27,8 +31,13 @@ from ..control.mpc_controller import (
     get_can_heat_cool,
     is_mpc_active,
 )
+from ..control.residual_heat import afterglow_rise_k, get_min_run_blocks, residual_tau
 from ..control.solar import compute_q_solar_norm
+from ..control.thermal_model import ThermalEKF
+from ..utils.history_store import MODEL_INPUT_FIELDS
+from ..utils.price_utils import PriceSignal
 from .analytics_stats import compute_period_stats, compute_rhythm, rhythm_window
+from .model_backtest import backtest
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +51,46 @@ def clear_sky_peak_today(latitude: float, longitude: float, now: float) -> float
         compute_q_solar_norm(latitude, longitude, start + i * SOLAR_PEAK_STEP_S)
         for i in range(86400 // SOLAR_PEAK_STEP_S)
     )
+
+
+def _afterglow_figures(room_config: dict, est: Any, q_heat: float, acs_can_heat: bool) -> dict:
+    """What the radiators' stored heat does after a regular run (radiator rooms only).
+
+    ``afterglow_k``: how far a full-power min run lifts the room after the stop, with the
+    learned scale and decay time; ``afterglow_minutes``: that decay time;
+    ``afterglow_learned``: whether a run has been measured yet (else the profile's guess).
+    Not with a heat-capable AC: the room never learns it there (its heat mixes in), the
+    tile would say "not measured yet" for good.
+    """
+    if acs_can_heat or room_config.get("heating_system_type", "") != HEATING_SYSTEM_RADIATOR:
+        return {}
+    minutes = get_min_run_blocks(HEATING_SYSTEM_RADIATOR) * 5.0
+    return {
+        "afterglow_k": round(
+            afterglow_rise_k(HEATING_SYSTEM_RADIATOR, q_heat, minutes, est.residual_scale, est.residual_tau), 2
+        ),
+        "afterglow_minutes": round(residual_tau(HEATING_SYSTEM_RADIATOR, est.residual_tau)),
+        "afterglow_learned": est.residual_scale_n > 0,
+    }
+
+
+# EKF states of the solar and occupancy gains (thermal_model.ThermalEKF)
+_SOLAR_STATE = 4
+_OCCUPANCY_STATE = 5
+# A gain counts as learned once its variance fell below this share of its start value
+LEARNED_VARIANCE_SHARE = 0.25
+
+
+def _observed(est: Any, state: int) -> bool:
+    """Whether the estimator has seen this gain in its data, not just its start value.
+
+    With gain gating a state that was never excited (no sun, no occupancy) gets no Kalman gain
+    and no drift noise, so its variance stays exactly at the start value until it is observed.
+    """
+    P = est._P
+    if len(P) <= state:
+        return False
+    return bool(P[state][state] < LEARNED_VARIANCE_SHARE * ThermalEKF._p_init_diag()[state])
 
 
 def _safe_float(value: str) -> float | None:
@@ -91,6 +140,17 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
                 "fan_mode": row.get("fan_mode", "") or None,
                 "heat_target": _safe_float(row.get("heat_target", "")),
                 "cool_target": _safe_float(row.get("cool_target", "")),
+                "target_reason": row.get("target_reason", ""),
+                "mold_boost": _safe_float(row.get("mold_boost", "")),
+                "price": _safe_float(row.get("price", "")),
+                "price_level": row.get("price_level", ""),
+                "price_shift": _safe_float(row.get("price_shift", "")),
+                "heat_starts": _safe_int(row.get("heat_starts", "")),
+                "cool_starts": _safe_int(row.get("cool_starts", "")),
+                "room_temp_max": _safe_float(row.get("room_temp_max", "")),
+                "room_temp_min": _safe_float(row.get("room_temp_min", "")),
+                "co2": _safe_float(row.get("co2", "")),
+                **{f: _safe_float(row.get(f, "")) for f in MODEL_INPUT_FIELDS},
             }
         )
     return result
@@ -105,6 +165,7 @@ async def _compute_target_forecast(
     interval_minutes: int = 5,
     schedule_blocks_cache: dict[str, dict] | None = None,
     room_vacant: bool = False,
+    price_signal: PriceSignal | None = None,
 ) -> list[dict]:
     """Compute target temperature forecast for the next N hours.
 
@@ -114,6 +175,7 @@ async def _compute_target_forecast(
     from ..utils.presence_utils import is_presence_away
     from ..utils.schedule_utils import (
         cap_cool_only_heat,
+        price_shifted,
         resolve_active_schedule_blocks,
         resolve_targets_at_time,
     )
@@ -162,6 +224,9 @@ async def _compute_target_forecast(
             presence_clears_override=bool(settings.get("presence_clears_override", False)),
             room_vacant=room_vacant,
         )
+        targets, (shift_heat, shift_cool) = price_shifted(
+            targets, ts, room, settings, price_signal, presence_away=presence_away, room_vacant=room_vacant
+        )
         heat_target = targets.heat
         cool_target = targets.cool
 
@@ -184,6 +249,9 @@ async def _compute_target_forecast(
                 "target_side": target_side if target is not None else None,
                 "heat_target": heat_target,
                 "cool_target": cool_target,
+                # For the prediction's pre-heat deadline, which ignores the price shift
+                "price_shift_heat": shift_heat,
+                "price_shift_cool": shift_cool,
             }
         )
         ts += interval_minutes * 60
@@ -237,6 +305,23 @@ async def build_analytics_data(
     room_config = store.get_room(area_id) or {}
     climate_mode = room_config.get("climate_mode", "auto")
     stats = compute_period_stats(sorted(history + detail, key=lambda p: p["ts"]), climate_mode)
+    # The model's error one hour ahead on this range; the line replaces the stored 3-min prediction
+    backtest_figures: dict | None = None
+    if coordinator and area_id in coordinator._model_manager._estimators:
+        est = coordinator._model_manager._estimators[area_id]
+        merged = sorted(history + detail, key=lambda p: p["ts"])
+        result = await hass.async_add_executor_job(backtest, merged, est.get_model(), est.k_window)
+        backtest_figures = result.figures()
+        for point in merged:
+            point["predicted_temp"] = result.predicted.get(point["ts"])
+    else:
+        for point in history + detail:
+            point["predicted_temp"] = None
+    # Only the figures need the run starts, bucket extremes and model inputs; 90 days of points would carry them
+    for point in history + detail:
+        del point["heat_starts"], point["cool_starts"], point["room_temp_max"], point["room_temp_min"]
+        for f in MODEL_INPUT_FIELDS:
+            del point[f]
 
     rhythm: dict | None = None
     if history_store:
@@ -255,6 +340,9 @@ async def build_analytics_data(
     # Model info (only if estimator exists -- avoid auto-creating for unknown rooms)
     model_info: dict = {}
     mpc_active = False
+    # The controller's path, which the prediction follows; differs from mpc_active only when
+    # the outdoor limits close both sides (see is_mpc_active)
+    mpc_runs = False
     if coordinator:
         mgr = coordinator._model_manager
         if area_id in mgr._estimators:
@@ -264,10 +352,14 @@ async def build_analytics_data(
             pred_std_heat = est.prediction_std(rc.Q_heat, 20.0, 10.0, 5.0)
             has_ext_sensor = bool(room_config.get("temperature_sensor"))
             if has_ext_sensor:
+                acs_heat = check_acs_can_heat(hass, room_config)
                 can_heat, can_cool = get_can_heat_cool(
                     room_config,
                     coordinator.outdoor_temp_effective,
-                    acs_can_heat=check_acs_can_heat(hass, room_config),
+                    settings.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN),
+                    settings.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX),
+                    acs_can_heat=acs_heat,
+                    override_active=is_override_active(room_config),
                     heating_season=settings.get("heating_season", DEFAULT_HEATING_SEASON),
                 )
                 T_out = (
@@ -275,17 +367,40 @@ async def build_analytics_data(
                     if coordinator.outdoor_temp_effective is not None
                     else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 )
-                mpc_active = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out, settings=settings)
-            else:
-                mpc_active = False
+                mpc_runs = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out, settings=settings)
+                mpc_active = mpc_runs and (
+                    can_heat
+                    or can_cool
+                    or is_mpc_active(
+                        mgr,
+                        area_id,
+                        can_heat,
+                        can_cool,
+                        20.0,
+                        T_out,
+                        settings=settings,
+                        room_sides=get_can_heat_cool(room_config, acs_can_heat=acs_heat),
+                    )
+                )
             # EKF uncertainty: sqrt(P[0][0]) as proxy for sigma_e
             sigma_proxy = math.sqrt(max(est._P[0][0], 0.0))
             has_occupancy_sensors = len(room_config.get("occupancy_sensors", [])) > 0
             model_info = {
                 "confidence": est.confidence,
+                "daily_history": [
+                    {
+                        "date": e[0],
+                        "confidence": e[1],
+                        "mpc_active": e[3],
+                        "error": e[4],
+                        "error_steps": e[5],
+                    }
+                    for e in est.confidence_history
+                ],
                 "model": rc.to_dict(),
                 "n_samples": est._n_updates,
                 "n_observations": est._n_updates,
+                "last_update_at": est._last_update_at,
                 "n_heating": est._n_heating,
                 "n_cooling": est._n_cooling,
                 "applicable_modes": sorted(est._applicable_modes),
@@ -294,6 +409,8 @@ async def build_analytics_data(
                 "prediction_std_idle": round(pred_std_idle, 4),
                 "prediction_std_heating": round(pred_std_heat, 4),
                 "has_occupancy_sensors": has_occupancy_sensors,
+                "solar_learned": _observed(est, _SOLAR_STATE),
+                "occupancy_learned": _observed(est, _OCCUPANCY_STATE),
                 # Q_solar is the gain at full sun (1000 W/m²); these are what it means now and today
                 "solar_gain_now": round(
                     rc.Q_solar
@@ -305,6 +422,8 @@ async def build_analytics_data(
                     rc.Q_solar * clear_sky_peak_today(hass.config.latitude, hass.config.longitude, time.time()),
                     3,
                 ),
+                **_afterglow_figures(room_config, est, rc.Q_heat, check_acs_can_heat(hass, room_config)),
+                "backtest": backtest_figures,
             }
 
     # Build merged forecast: same format as history points, on a shared 5-min grid
@@ -322,6 +441,7 @@ async def build_analytics_data(
             mold_prevention_delta=mold_delta,
             schedule_blocks_cache=getattr(coordinator, "_schedule_blocks_cache", None),
             room_vacant=room_vacant,
+            price_signal=coordinator.price_signal if coordinator else None,
         )
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Target forecast computation failed for '%s'", area_id)
@@ -369,19 +489,25 @@ async def build_analytics_data(
                 )
                 # Residual heat state for analytics simulation
                 system_type = room_config.get("heating_system_type", "")
+                # The learned residual heat applies to radiator rooms only
+                sim_scale = est.residual_scale if system_type == HEATING_SYSTEM_RADIATOR else 1.0
+                # Learned afterglow decay time (radiators); None uses the profile's
+                sim_tau = est.residual_tau if system_type == HEATING_SYSTEM_RADIATOR else None
                 sim_q_residual = 0.0
                 sim_heat_dur = 0.0
-                sim_last_pf = 1.0
+                # Power of the run in progress or the last one (the prediction weighs its afterglow)
+                sim_last_pf = coordinator._residual_tracker._off_power.get(area_id, 1.0)
                 if system_type and area_id in getattr(coordinator._residual_tracker, "_off_since", {}):
                     import time as _time
 
                     off_since = coordinator._residual_tracker._off_since[area_id]
                     elapsed = (_time.time() - off_since) / 60.0
                     sim_heat_dur = (off_since - coordinator._residual_tracker._on_since.get(area_id, off_since)) / 60.0
-                    sim_last_pf = coordinator._residual_tracker._off_power.get(area_id, 1.0)
                     from ..control.residual_heat import compute_residual_heat
 
-                    sim_q_residual = compute_residual_heat(elapsed, system_type, sim_last_pf, sim_heat_dur)
+                    sim_q_residual = compute_residual_heat(
+                        elapsed, system_type, sim_last_pf, sim_heat_dur, sim_scale, sim_tau
+                    )
 
                 sim_q_occupancy = 0.0
                 for occ_eid in room_config.get("occupancy_sensors", []):
@@ -405,7 +531,7 @@ async def build_analytics_data(
                         outdoor_series=outdoor_series,
                         current_temp=current_t,
                         window_open=coordinator._window_manager._paused.get(area_id, False),
-                        mpc_active=mpc_active,
+                        mpc_active=mpc_runs,
                         room_config=room_config,
                         settings=settings,
                         all_points=all_points,
@@ -415,6 +541,8 @@ async def build_analytics_data(
                         heating_system_type=system_type,
                         heating_duration_minutes=sim_heat_dur,
                         last_power_fraction=sim_last_pf,
+                        residual_scale=sim_scale,
+                        residual_tau=sim_tau,
                         q_occupancy=sim_q_occupancy,
                         q_rebound=coordinator._rebound_tracker.get_charge(area_id),
                         previous_mode=sim_prev_mode,
@@ -440,6 +568,8 @@ async def build_analytics_data(
                 "outdoor_temp": None,
                 "target_temp": tf["target_temp"],
                 "target_side": tf.get("target_side"),
+                "heat_target": tf["heat_target"],
+                "cool_target": tf["cool_target"],
                 "mode": "forecast",
                 "predicted_temp": pred_temps[i] if i < len(pred_temps) else None,
                 "window_open": False,
@@ -465,4 +595,12 @@ async def build_analytics_data(
         },
         "stats": stats,
         "rhythm": rhythm,
+        "price_unit": _price_unit(hass, settings),
     }
+
+
+def _price_unit(hass: HomeAssistant, settings: dict) -> str:
+    """Unit of the price source (ct/kWh, EUR/kWh, ...), empty for a switch or none."""
+    entity_id = settings.get("price_entity") or ""
+    state = hass.states.get(entity_id) if entity_id else None
+    return str(state.attributes.get("unit_of_measurement") or "") if state else ""

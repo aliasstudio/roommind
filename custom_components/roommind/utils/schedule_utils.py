@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -23,10 +24,12 @@ from ..const import (
     MIN_TARGET_TEMP,
     OVERRIDE_BOOST,
     OVERRIDE_ECO,
+    SCHEDULE_UNREADABLE_HOLD_HOURS,
     TargetTemps,
     is_override_active,
 )
 from .device_utils import DEVICE_TYPE_AC, DEVICE_TYPE_TRV, SWING_MODE_KEYS
+from .price_utils import PriceSignal, apply_price_shift
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -161,8 +164,18 @@ def band_in_force(room: dict, live: dict) -> tuple[float | None, float | None]:
     cool = live.get("cool_target")
     if heat is None and cool is None:
         return override_preset_band(room, OVERRIDE_BOOST)
-    if heat is not None and live.get("mold_prevention_active"):
-        heat -= live.get("mold_prevention_delta") or 0
+    return without_temporary_shifts(heat, cool, live)
+
+
+def without_temporary_shifts(heat: float | None, cool: float | None, live: dict) -> tuple[float | None, float | None]:
+    """Live targets without mold prevention and the electricity price shift: neither is part of
+    the user's band, a slider or wall display mirroring them would echo them back as an override."""
+    if heat is not None:
+        heat -= live.get("price_shift_heat") or 0
+        if live.get("mold_prevention_active"):
+            heat -= live.get("mold_prevention_delta") or 0
+    if cool is not None:
+        cool -= live.get("price_shift_cool") or 0
     return heat, cool
 
 
@@ -556,12 +569,37 @@ def next_schedule_change(hass: HomeAssistant, room: dict) -> float | None:
     """Return the timestamp of the active schedule's next block boundary, or None without one."""
     entity_id = get_active_schedule_entity(hass, room)
     state = hass.states.get(entity_id) if entity_id else None
+    return _next_event(state)
+
+
+def _next_event(state: Any) -> float | None:
     raw = state.attributes.get("next_event") if state else None
     if isinstance(raw, str):
         raw = dt_util.parse_datetime(raw)
     if not isinstance(raw, datetime):
         return None
     return raw.timestamp()
+
+
+def override_hold_until(hass: HomeAssistant, room: dict, now: float | None = None) -> float | None:
+    """End of an override held until the schedule changes; None holds until changed.
+
+    None without a schedule and under a schedule without blocks (it never changes).
+    A schedule that cannot be read (missing, unavailable, a past `next_event`) ends
+    the hold after `SCHEDULE_UNREADABLE_HOLD_HOURS`, else it would never end.
+    """
+    entity_id = get_active_schedule_entity(hass, room)
+    if not entity_id:
+        return None
+    now = time.time() if now is None else now
+    state = hass.states.get(entity_id)
+    if state is not None and state.state not in ("unavailable", "unknown"):
+        nxt = _next_event(state)
+        if nxt is None and not state.attributes.get("next_event"):
+            return None
+        if nxt is not None and nxt > now:
+            return nxt
+    return now + SCHEDULE_UNREADABLE_HOLD_HOURS * 3600
 
 
 async def read_schedule_blocks(
@@ -619,6 +657,48 @@ async def read_schedule_blocks(
     return None
 
 
+def schedule_sets_target(ts: float, room: dict, settings: dict, *, presence_away: bool, room_vacant: bool) -> bool:
+    """Whether the schedule (or comfort/eco without one) sets the target at ``ts``.
+
+    Only then may the electricity price shift it: an override is the user's own choice,
+    vacation and absence lower the target on purpose, and an empty room never gets more
+    than eco (#180).
+    """
+    if presence_away or room_vacant:
+        return False
+    vacation_until = settings.get("vacation_until")
+    if vacation_until is not None and settings.get("vacation_temp") is not None and ts < vacation_until:
+        return False
+    if room.get("override_heat") is None and room.get("override_cool") is None:
+        return True
+    override_until = room.get("override_until")
+    return override_until is not None and ts >= override_until
+
+
+def price_shifted(
+    targets: TargetTemps,
+    ts: float,
+    room: dict,
+    settings: dict,
+    price_signal: PriceSignal | None,
+    *,
+    presence_away: bool,
+    room_vacant: bool,
+) -> tuple[TargetTemps, tuple[float, float]]:
+    """Targets moved with the price where the room opted in, and the (heat, cool) shift applied."""
+    shift = float(room.get("price_shift") or 0.0)
+    if price_signal is None or shift <= 0 or room.get("is_outdoor"):
+        return targets, (0.0, 0.0)
+    if not schedule_sets_target(ts, room, settings, presence_away=presence_away, room_vacant=room_vacant):
+        return targets, (0.0, 0.0)
+    shifted = apply_price_shift(targets, price_signal.direction_at(ts), shift)
+
+    def delta(new: float | None, old: float | None) -> float:
+        return round(new - old, 3) if new is not None and old is not None else 0.0
+
+    return shifted, (delta(shifted.heat, targets.heat), delta(shifted.cool, targets.cool))
+
+
 def make_target_resolver(
     schedule_blocks: dict | None,
     room: dict,
@@ -627,6 +707,7 @@ def make_target_resolver(
     presence_away: bool = False,
     mold_prevention_delta: float = 0.0,
     room_vacant: bool = False,
+    price_signal: PriceSignal | None = None,
 ) -> Callable[[float], TargetTemps]:
     """Create a sync target resolver function (schedule blocks pre-fetched).
 
@@ -676,6 +757,9 @@ def make_target_resolver(
         )
         if targets.heat is None and targets.cool is None:
             return targets
+        targets, _ = price_shifted(
+            targets, ts, room, settings, price_signal, presence_away=presence_away, room_vacant=room_vacant
+        )
         return TargetTemps(
             *cap_cool_only_heat(
                 targets.heat + mold_prevention_delta if targets.heat is not None else None,

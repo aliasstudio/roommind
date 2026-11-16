@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
@@ -41,6 +42,8 @@ from ..const import (
     PROPORTIONAL_DEADBAND_C,
     PROPORTIONAL_DEADBAND_NEAR_TARGET_C,
     PROPORTIONAL_SETPOINT_DWELL_SECONDS,
+    PROPORTIONAL_SETPOINT_REPORT_SECONDS,
+    PROPORTIONAL_SETPOINT_REPORT_TOLERANCE,
     VALVE_OVERSHOOT_STOP_K,
     VALVE_PROPORTIONAL_BAND_K,
     TargetTemps,
@@ -74,7 +77,7 @@ from ..utils.device_utils import (
 from ..utils.temp_utils import celsius_delta_to_ha, celsius_to_ha_temp
 from .direct_valve import async_release_valve, async_set_valve, clear_valve_cache
 from .mpc_optimizer import MPCOptimizer, MPCPlan, preheat_max_blocks, slow_start_penalty
-from .residual_heat import get_min_run_blocks, mean_rebound
+from .residual_heat import get_min_run_blocks, heat_min_run_blocks, mean_rebound
 from .thermal_model import RoomModelManager
 
 if TYPE_CHECKING:
@@ -108,9 +111,10 @@ _overshoot_sent: set[str] = set()
 _hold_modulated: set[str] = set()
 # Heating start times per AC entity (monotonic timestamp) for initial warm-up louver holding.
 _ac_heat_started_at: dict[str, float] = {}
-# Last proportional setpoint send per device: (monotonic send time, (heat, cool) targets it was
-# computed for). Any other command to the device drops the entry (#317).
-_proportional_sent: dict[str, tuple[float, tuple[float | None, float | None]]] = {}
+# Last proportional setpoint send per device (#317). Any other command to the device drops the entry.
+_proportional_sent: dict[str, _ProportionalSend] = {}
+# Switch-on time of a dropped setpoint sent again this cycle: the dwell still ends from there
+_dwell_reasserting: dict[str, float] = {}
 # hvac states in which a lower setpoint means more cooling, not less output
 # Outcome of MPCController._call
 _CALL_SENT = "sent"  # a command went to the device
@@ -124,6 +128,30 @@ _COOLING_CAPABLE_STATES = ("heat_cool", "auto")
 
 def _now() -> float:
     return time.monotonic()
+
+
+def _controlled_setpoints(data: dict, temp_intent: str) -> dict[str, float]:
+    """The setpoint values of a send that RoomMind computed (a range device's other side is copied)."""
+    if data.get("temperature") is not None:
+        return {"temperature": float(data["temperature"])}
+    keys = {"heat": ("target_temp_low",), "cool": ("target_temp_high",)}.get(
+        temp_intent, ("target_temp_low", "target_temp_high")
+    )
+    return {k: float(data[k]) for k in keys if data.get(k) is not None}
+
+
+@dataclass(frozen=True)
+class _ProportionalSend:
+    """A proportional setpoint as sent: when, for which targets, which values.
+
+    ``switched_on``: the send also switched the device on from another mode; only then
+    is the value checked for a fallback (``_setpoint_dropped``).
+    """
+
+    at: float
+    targets: tuple[float | None, float | None]
+    values: dict[str, float]
+    switched_on: bool = False
 
 
 def _cache_entry(service: str, data: dict) -> dict[str, Any]:
@@ -297,6 +325,7 @@ def clear_command_cache() -> None:
     _last_by_service.clear()
     _sent_at.clear()
     _proportional_sent.clear()
+    _dwell_reasserting.clear()
     _setpoint_override_warned.clear()
     _active_targets.clear()
     _overshoot_sent.clear()
@@ -588,7 +617,7 @@ async def async_idle_device(
     use_setpoint_offset: bool = True,
     release_setback: frozenset[str] = frozenset(),
     head_offset: float = 0.0,
-) -> None:
+) -> bool:
     """Idle a climate device per its configured idle_action.
 
     "off"      -> async_turn_off_climate() (existing behavior)
@@ -596,6 +625,7 @@ async def async_idle_device(
     "setback"  -> keep current hvac_mode, shift target by offset
     "low"      -> lower setpoint to device min_temp, never send set_hvac_mode(off)
     Falls back to off when the configured action is not applicable.
+    Returns True when the device is held at its setback target (#509).
 
     ``use_setpoint_offset`` lets the setback keep a direct device's sensor
     offset (#369); the controller turns it off in Managed mode.
@@ -634,7 +664,7 @@ async def async_idle_device(
     if idle_action == IDLE_ACTION_LOW:
         state = hass.states.get(entity_id)
         if state is None:
-            return
+            return False
         effective_setpoint = _resolve_idle_setpoint(
             state,
             fallback_temp,
@@ -643,7 +673,7 @@ async def async_idle_device(
         )
         if effective_setpoint is not None:
             await _send_idle_setpoint(hass, entity_id, state, effective_setpoint, area_id=area_id)
-        return
+        return False
 
     # --- SETBACK branch ---
     if idle_action == IDLE_ACTION_SETBACK:
@@ -658,7 +688,7 @@ async def async_idle_device(
                 entity_id,
             )
             await async_turn_off_climate(hass, entity_id, area_id=area_id, fallback_setpoint=fallback_temp)
-            return
+            return False
 
         if current_hvac not in ("heat", "cool") or targets is None:
             _LOGGER.debug(
@@ -669,7 +699,7 @@ async def async_idle_device(
                 targets,
             )
             await async_turn_off_climate(hass, entity_id, area_id=area_id, fallback_setpoint=fallback_temp)
-            return
+            return False
 
         # Direct devices keep their sensor offset (#369), but only where the active
         # path applies it too (Full Control).
@@ -680,7 +710,7 @@ async def async_idle_device(
             setback_temp = targets.cool + sensor_offset + head_offset + DEFAULT_IDLE_SETBACK_OFFSET
         else:
             await async_turn_off_climate(hass, entity_id, area_id=area_id, fallback_setpoint=fallback_temp)
-            return
+            return False
 
         # Convert to HA units FIRST, then clamp to device min/max
         # (device attributes min_temp/max_temp are in HA units, not Celsius)
@@ -704,13 +734,13 @@ async def async_idle_device(
         # Redundancy check: already at setback temp
         current_temp_attr = state.attributes.get("temperature")
         if current_temp_attr is not None and abs(float(current_temp_attr) - ha_t) < 0.1:
-            return
+            return True
 
         # Cache check (only for devices without reliable state feedback)
         if _should_use_cache(state):
             cached = _last_commands.get(entity_id)
             if cached and cached.get("service") == "set_temperature" and cached.get("temperature") == ha_t:
-                return
+                return True
 
         _LOGGER.debug(
             "Area '%s': setback on '%s' — target %.1f → %.1f",
@@ -736,12 +766,13 @@ async def async_idle_device(
                 entity_id,
                 exc_info=True,
             )
-        return
+            return False
+        return True
 
     # --- OFF branch ---
     if idle_action != IDLE_ACTION_FAN_ONLY:
         await async_turn_off_climate(hass, entity_id, area_id=area_id, fallback_setpoint=fallback_temp)
-        return
+        return False
 
     state = hass.states.get(entity_id)
     hvac_modes: list[str] = (state.attributes.get("hvac_modes") or []) if state else []
@@ -753,7 +784,7 @@ async def async_idle_device(
             entity_id,
         )
         await async_turn_off_climate(hass, entity_id, area_id=area_id, fallback_setpoint=fallback_temp)
-        return
+        return False
 
     # A fan mode the device does not have is left alone, like an empty idle_fan_mode:
     # waiting for the device to report it would resend fan_only every cycle.
@@ -771,7 +802,7 @@ async def async_idle_device(
     if state and state.state == "fan_only":
         current_fan = state.attributes.get("fan_mode")
         if fan_mode is None or current_fan == fan_mode:
-            return
+            return False
 
     # Cache fallback for IR devices (only when device has no reliable state)
     if _should_use_cache(state):
@@ -779,7 +810,7 @@ async def async_idle_device(
         if cached and cached.get("service") == "set_hvac_mode" and cached.get("hvac_mode") == "fan_only":
             cached_fan = _last_by_service.get((entity_id, "set_fan_mode"))
             if fan_mode is None or (cached_fan is not None and cached_fan.get("fan_mode") == fan_mode):
-                return
+                return False
 
     try:
         await hass.services.async_call(
@@ -800,7 +831,7 @@ async def async_idle_device(
             entity_id,
             exc_info=True,
         )
-        return
+        return False
 
     if fan_mode is not None:
         try:
@@ -820,6 +851,39 @@ async def async_idle_device(
                 entity_id,
                 exc_info=True,
             )
+    return False
+
+
+def boost_cap_ha(hass: HomeAssistant, state: Any) -> float | None:
+    """Highest proportional heating setpoint a device gets, in HA units; None without a max_temp.
+
+    One step below max_temp: some integrations validate the upper bound exclusively or
+    after a unit round trip, so exactly max_temp can be rejected (#396). The sender never
+    goes below the room target with it. Without ``target_temp_step`` a device that shows
+    whole degrees gets a whole-degree ceiling, so what it reads back equals what was sent;
+    devices showing tenths keep the 0.5 K margin. The device_setpoint display uses the same cap (#507).
+    """
+    raw_max = state.attributes.get("max_temp") if state else None
+    if raw_max is None:
+        return None
+    try:
+        max_t = float(raw_max)
+        step = float(state.attributes.get("target_temp_step") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    whole_ceiling = False
+    if step <= 0:
+        # In HA units so that a whole-degree snap on °F devices (no step reported) still lands below max_temp
+        step = celsius_delta_to_ha(hass, BOOST_CAP_FALLBACK_STEP)
+        try:
+            whole_ceiling = float(state.attributes.get("temperature")).is_integer()
+        except (TypeError, ValueError):
+            pass
+    cap = max_t - step
+    if whole_ceiling:
+        # The device shows whole degrees: 29.5 would read back as 30 and be resent every cycle
+        cap = math.floor(cap)
+    return cap
 
 
 def resolve_hvac_mode(desired: str, hvac_modes: list[str]) -> str | None:
@@ -1287,11 +1351,15 @@ def is_mpc_active(
     outdoor_temp: float,
     *,
     settings: dict | None = None,
+    room_sides: tuple[bool, bool] | None = None,
 ) -> bool:
-    """Check if MPC control is active for a room.
+    """Check if MPC control is active for a room (the controller's gate).
 
-    Single source of truth for MPC activation — used by coordinator
-    and analytics.
+    Used by coordinator and analytics. ``room_sides`` = (can_heat, can_cool) without the
+    outdoor limits: when those limits close both sides, the sample gates judge the sides
+    the room has. Without it a cool-only room in winter that never cooled read as ready
+    (only the idle gate was left). The controller itself picks its path without it:
+    nothing may run then, its MPC path idles too.
     """
     if not is_mpc_enabled(settings):
         return False
@@ -1301,6 +1369,8 @@ def is_mpc_active(
     if pred_std >= MPC_MAX_PREDICTION_STD:
         return False
 
+    if not can_heat and not can_cool and room_sides is not None:
+        can_heat, can_cool = room_sides
     n_idle, n_heating, n_cooling = model_manager.get_mode_counts(area_id)
     if n_idle < MIN_IDLE_UPDATES:
         return False
@@ -1340,12 +1410,16 @@ class MPCController:
         has_external_sensor: bool = True,
         target_resolver: Callable[[float], TargetTemps | float] | None = None,
         fan_cap_resolver: Callable[[float], float] | None = None,
+        schedule_target_resolver: Callable[[float], TargetTemps] | None = None,
         q_solar: float = 0.0,
         latitude: float = 0.0,
         longitude: float = 0.0,
         cloud_series: list[float | None] | None = None,
         q_residual: float = 0.0,
         heating_system_type: str = "",
+        residual_scale: float = 1.0,
+        residual_tau: float | None = None,
+        heat_run: tuple[float, float] | None = None,
         mode_on_since: float | None = None,
         idle_since: float | None = None,
         shading_factor: float = 1.0,
@@ -1353,6 +1427,8 @@ class MPCController:
         q_rebound: float | None = None,
         previous_heat_sources: str = "none",
         head_offsets: HeadOffsetTracker | None = None,
+        price_level: str | None = None,
+        planning_temp: float | None = None,
     ) -> None:
         self.hass = hass
         self.room_config = room_config
@@ -1364,6 +1440,8 @@ class MPCController:
         self._valve_entities: dict[str, ValveEntities] = get_valve_entities(self._devices)
         self.climate_mode: str = room_config.get("climate_mode", "auto")
         self.outdoor_temp = outdoor_temp
+        # Price level the orchestration follows (heat_source_price_aware), same as the coordinator's
+        self.price_level = price_level
         self.outdoor_forecast = outdoor_forecast or []
         self.previous_mode = previous_mode
         self.has_external_sensor = has_external_sensor
@@ -1373,6 +1451,8 @@ class MPCController:
         self._area_id = room_config.get("area_id", "unknown")
         self._target_resolver = target_resolver
         self._fan_cap_resolver = fan_cap_resolver
+        # Targets without the electricity price shift (only for rooms following the price)
+        self._schedule_target_resolver = schedule_target_resolver
         self.last_plan: MPCPlan | None = None
         self._peak_temps_unoccupied: list[float] | None = None
         self.q_solar = q_solar
@@ -1381,6 +1461,16 @@ class MPCController:
         self._cloud_series = cloud_series or []
         self.q_residual = q_residual
         self._heating_system_type = heating_system_type
+        # Learned multiplier on the residual heat profile, and the heating run in
+        # progress as (minutes, power fraction): the plan weighs the heat that
+        # stopping now would leave in the radiators (ResidualHeatTracker.get_run_state)
+        self._residual_scale = residual_scale
+        # Learned decay time of that afterglow (minutes); None uses the profile's
+        self._residual_tau = residual_tau
+        self._heat_run = heat_run
+        # Room temperature the plan starts from while the sensor lags a radiator's afterglow
+        # (AfterglowReading); None plans from the reading
+        self._planning_temp = planning_temp
         # Heating system whose run rules apply this cycle (see _resolve_run_system)
         self._run_system = heating_system_type
         self._previous_heat_sources = previous_heat_sources
@@ -1398,8 +1488,14 @@ class MPCController:
         # Strictest heat / cool target within the MPC guard window (set by _evaluate_mpc)
         self._lead_heat: float | None = None
         self._lead_cool: float | None = None
+        # What a running pre-heat/pre-cool aims at, for the live display (set by _evaluate_mpc)
+        self.preheat: dict[str, Any] | None = None
         # hvac modes whose setback devices may switch off (set by _evaluate_mpc)
         self._setback_release: frozenset[str] = frozenset()
+        # Only the MPC path can end a setback in off (set by _evaluate_mpc)
+        self._planned = False
+        # Devices the idle branch of async_apply holds at their setback target (#509)
+        self.setback_eids: list[str] = []
 
         s = settings or {}
         self._mpc_enabled = is_mpc_enabled(s)
@@ -1450,7 +1546,9 @@ class MPCController:
             targets = TargetTemps(heat=t, cool=t) if t is not None else TargetTemps(heat=None, cool=None)
 
         self._lead_heat = self._lead_cool = None
+        self.preheat = None
         self._setback_release = frozenset()
+        self._planned = False
         if not self.has_external_sensor:
             mode = self._evaluate_managed_mode(targets)
             return mode, 1.0  # managed mode: device self-regulates
@@ -1476,7 +1574,10 @@ class MPCController:
             q_occupancy=self.q_occupancy,
         )
         if pred_std < MPC_MAX_PREDICTION_STD and self._has_enough_data(can_heat, can_cool):
-            return self._evaluate_mpc(current_temp, targets)
+            plan_from = (
+                self._planning_temp if self._planning_temp is not None and current_temp is not None else current_temp
+            )
+            return self._evaluate_mpc(plan_from, targets)
         # Bang-bang fallback: binary control (1.0 power) for fast EKF learning
         mode = self._evaluate_bangbang(current_temp, targets)
         return mode, 1.0 if mode != MODE_IDLE else 0.0
@@ -1502,9 +1603,24 @@ class MPCController:
         if self.previous_mode != mode or self._mode_on_since is None:
             return False
         # Cooling always runs on an AC; the UFH profile of a hybrid room is not its run time.
-        system = self._run_system if mode == MODE_HEATING else ""
-        min_run_seconds = get_min_run_blocks(system, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
-        return (time.time() - self._mode_on_since) < min_run_seconds
+        if mode == MODE_HEATING:
+            blocks = self._heat_min_run(self._run_system)
+        else:
+            blocks = get_min_run_blocks("", PLAN_DT_MINUTES)
+        return (time.time() - self._mode_on_since) < blocks * PLAN_DT_MINUTES * 60
+
+    def _heat_min_run(self, system: str) -> int:
+        """Heating min run in blocks; one block for radiators whose learned stored heat is large."""
+        if not self._mpc_enabled:
+            return get_min_run_blocks(system, PLAN_DT_MINUTES)
+        return heat_min_run_blocks(
+            system,
+            PLAN_DT_MINUTES,
+            q_heat=self._model_manager.get_model(self._area_id).Q_heat,
+            scale=self._residual_scale,
+            tau_minutes=self._residual_tau,
+            fast_heater=check_acs_can_heat(self.hass, self.room_config),
+        )
 
     def _direct_unit_running(self, mode: str, current_temp: float, targets: TargetTemps) -> bool:
         """Whether a run of *mode* is still a direct AC's own compressor run, which it ends itself.
@@ -1560,8 +1676,9 @@ class MPCController:
         Heat source orchestration closes a small gap with the AC alone; the UFH rules of
         the room would then hold that AC for 30 min and let it pre-heat on a predicted
         drift. Asks the orchestrator which sources a heating run would use now (with its
-        hysteresis on the sources of the running run) and falls back to the running
-        sources when it has no answer (room at the target).
+        hysteresis on the sources of the running run; from idle at the target the
+        preferred one, so a mild day gets no drift pre-heat the AC would have to carry)
+        and falls back to the running sources when it has no answer.
         """
         system = self._heating_system_type
         if (
@@ -1580,6 +1697,7 @@ class MPCController:
                 outdoor_temp=self.outdoor_temp,
                 previous_active_sources=self._previous_heat_sources,
                 hass=self.hass,
+                price_level=self.price_level,
             )
             sources = (
                 plan.active_sources
@@ -1645,8 +1763,13 @@ class MPCController:
         # becomes the room temperature a "no target" block was filled with.
         raw_heat: list[float | None] = []
         raw_cool: list[float | None] = []
+        # Targets without the price shift, only for naming a pre-heat (a cheap-hour charge is none)
+        shown_targets: list[TargetTemps] = []
+        shown_resolver: Callable[[float], TargetTemps] | None = None
+        schedule_heat_series: list[float] | None = None
+        schedule_cool_series: list[float] | None = None
+        now = time.time()
         if self._target_resolver is not None:
-            now = time.time()
             dt_seconds = PLAN_DT_MINUTES * 60
             raw_targets = [self._target_resolver(now + i * dt_seconds) for i in range(horizon_blocks)]
             # Extract separate heat and cool series from TargetTemps
@@ -1657,6 +1780,16 @@ class MPCController:
                 filled = [fill_missing_targets(t.heat, t.cool, current_temp) for t in pairs]
                 heat_target_series = [h for h, _ in filled]
                 cool_target_series = [c for _, c in filled]
+                shown_targets = pairs
+                shown_resolver = cast(Callable[[float], TargetTemps], self._target_resolver)
+                if self._schedule_target_resolver is not None:
+                    shown_resolver = self._schedule_target_resolver
+                    shown_targets = [
+                        self._schedule_target_resolver(now + i * dt_seconds) for i in range(horizon_blocks)
+                    ]
+                    schedule_filled = [fill_missing_targets(t.heat, t.cool, current_temp) for t in shown_targets]
+                    schedule_heat_series = [h for h, _ in schedule_filled]
+                    schedule_cool_series = [c for _, c in schedule_filled]
             else:
                 # Legacy resolver returning float|None
                 float_targets = cast(list[float | None], raw_targets)
@@ -1684,7 +1817,7 @@ class MPCController:
         # more with the rules of those sources, else the AC was started on the floor's
         # schedule and stopped by its own rules the next cycle.
         for _pass in range(2):
-            min_run = get_min_run_blocks(run_system, PLAN_DT_MINUTES)
+            min_run = self._heat_min_run(run_system)
 
             cooling_min, heating_max = outdoor_gate_limits(
                 self.outdoor_temp is not None or bool(self.outdoor_forecast),
@@ -1708,6 +1841,8 @@ class MPCController:
                 start_penalty=slow_start_penalty(min_run, PLAN_DT_MINUTES),
                 fast_heater_shares_model=check_acs_can_heat(self.hass, self.room_config),
                 preheat_max_blocks=self._preheat_max_blocks,
+                residual_scale=self._residual_scale,
+                residual_tau=self._residual_tau,
             )
 
             plan = optimizer.optimize(
@@ -1722,6 +1857,9 @@ class MPCController:
                 fan_efficiency_series=fan_efficiency_series,
                 initial_mode=self.previous_mode,
                 rebound_charge=self.q_rebound,
+                heat_run=self._heat_run,
+                schedule_heat_series=schedule_heat_series,
+                schedule_cool_series=schedule_cool_series,
             )
             self.last_plan = plan
             # Shading can attenuate solar gain, never the body heat of whoever just
@@ -1792,12 +1930,59 @@ class MPCController:
             if lead_system == run_system:
                 break
             run_system = lead_system
+        self.preheat = (
+            self._preheat_display(action[0], current_temp, shown_targets[:guard_blocks], now, shown_resolver)
+            if shown_resolver is not None
+            else None
+        )
+        self._planned = True
         if action[0] == MODE_IDLE and self._setback_hold_over() and len(plan.actions) >= SETBACK_RELEASE_BLOCKS:
             ahead = plan.actions[:SETBACK_RELEASE_BLOCKS]
             self._setback_release = frozenset(
                 hvac for hvac, run in (("heat", MODE_HEATING), ("cool", MODE_COOLING)) if run not in ahead
             )
         return action
+
+    @staticmethod
+    def _preheat_display(
+        mode: str,
+        current_temp: float,
+        window: list[TargetTemps],
+        now: float,
+        resolve: Callable[[float], TargetTemps],
+    ) -> dict[str, Any] | None:
+        """The stricter target a run heats (cools) ahead of and when it starts, else None.
+
+        Only while the room already meets the target in force: below it the run would heat
+        anyway and naming a later block would be wrong. *window* is the guard window
+        without the price shift, sampled by *resolve* every plan block; the start is looked
+        up between the two samples, else a 06:00 block read 06:04.
+        """
+        if mode not in (MODE_HEATING, MODE_COOLING) or not window:
+            return None
+        heating = mode == MODE_HEATING
+        values = [t.heat if heating else t.cool for t in window]
+        current = values[0]
+        if current is None:
+            return None
+        if heating and current_temp < current or not heating and current_temp > current:
+            return None
+        known = [v for v in values if v is not None]
+        lead = max(known) if heating else min(known)
+        if abs(lead - current) < 0.05:
+            return None
+        index = values.index(lead)
+        step = PLAN_DT_MINUTES * 60
+        lo, hi = now + (index - 1) * step, now + index * step
+        while hi - lo > 10:
+            mid = (lo + hi) / 2
+            at_mid = resolve(mid)
+            side = at_mid.heat if heating else at_mid.cool
+            if side is not None and abs(side - lead) < 0.05:
+                hi = mid
+            else:
+                lo = mid
+        return {"mode": mode, "target": lead, "at": math.ceil(hi)}
 
     def _gentle_power(
         self, optimizer: MPCOptimizer, current_temp: float, outdoor_temp: float, mode: str, target: float
@@ -2030,7 +2215,7 @@ class MPCController:
         profile = HEATING_SYSTEM_PROFILES.get(self._heating_system_type)
         if not profile:
             return None
-        tau = profile["tau_minutes"]
+        tau = profile["tau_minutes"] if self._residual_tau is None else self._residual_tau
         if tau <= 0:
             return None
         series: list[float] = []
@@ -2089,6 +2274,7 @@ class MPCController:
         # after backward-compat conversion so legacy callers get a TargetTemps.
         self._idle_targets = targets
         self._force_off = force_off
+        self.setback_eids = []
         for eid in self.thermostats + self.acs:
             if eid not in _forced_on:
                 _overshoot_sent.discard(eid)
@@ -2553,7 +2739,7 @@ class MPCController:
                     )
                     await self._async_release_valve(eid)
                     continue
-                await async_idle_device(
+                if await async_idle_device(
                     self.hass,
                     eid,
                     self._devices,
@@ -2563,13 +2749,30 @@ class MPCController:
                     head_offset=self._head_offset(eid, "idle"),
                     force_off=force_off,
                     release_setback=self._release_setback_for(eid, sitting_out),
-                )
+                ):
+                    self.setback_eids.append(eid)
                 await self._async_release_valve(eid)
                 # setback idle keeps the AC in cool/heat mode and blowing; apply
                 # the coordinator's proportional fan override so it can settle to
                 # its minimum (e.g. Mute) once the room is at/below target.
                 if eid in self._fan_overrides:
                     await self._apply_active_fan_mode(eid)
+
+    def setback_display(self) -> dict[str, Any] | None:
+        """Devices held at their setback target, and the earliest time they switch off (#509).
+
+        ``until`` only while every held device has setback_auto_off and the room runs on
+        the MPC plan; from then on the plan decides each cycle, so no time is shown.
+        """
+        if not self.setback_eids:
+            return None
+        until: float | None = None
+        if self._planned and all(get_setback_auto_off(self._devices, eid) for eid in self.setback_eids):
+            idle_since = self._idle_since if self._idle_since is not None else time.time()
+            until = idle_since + SETBACK_HOLD_MINUTES * 60
+            if until <= time.time():
+                until = None
+        return {"devices": list(self.setback_eids), "until": until}
 
     def _release_setback_for(self, eid: str, sitting_out: set[str]) -> frozenset[str]:
         """Modes in which ``eid``'s setback ends in off: always while sitting out, else only when opted in (#255)."""
@@ -2927,39 +3130,12 @@ class MPCController:
         return self._boost_setpoint_ha(eid, proportional_celsius, effective_target)
 
     def _boost_setpoint_ha(self, eid: str, celsius: float, effective_target: float) -> float:
-        """HA-unit proportional heating setpoint, kept one step below the device's max_temp.
-
-        Some integrations validate the upper bound exclusively or after a
-        unit round trip, so exactly max_temp can be rejected (#396). The cap
-        only trims the top step of the boost and never goes below the room
-        target. Without ``target_temp_step`` a device that shows whole degrees
-        gets a whole-degree ceiling, so what it reads back equals what was
-        sent; devices showing tenths keep the 0.5 K margin.
-        """
+        """HA-unit proportional heating setpoint, kept below the device's max_temp (``boost_cap_ha``)."""
         ha_t = celsius_to_ha_temp(self.hass, celsius)
-        state = self.hass.states.get(eid)
-        raw_max = state.attributes.get("max_temp") if state else None
-        if raw_max is None:
+        cap = boost_cap_ha(self.hass, self.hass.states.get(eid))
+        if cap is None:
             return ha_t
-        try:
-            max_t = float(raw_max)
-            step = float(state.attributes.get("target_temp_step") or 0.0)
-        except (TypeError, ValueError):
-            return ha_t
-        whole_ceiling = False
-        if step <= 0:
-            # In HA units so that a whole-degree snap on °F devices (no step reported) still lands below max_temp
-            step = celsius_delta_to_ha(self.hass, BOOST_CAP_FALLBACK_STEP)
-            try:
-                whole_ceiling = float(state.attributes.get("temperature")).is_integer()
-            except (TypeError, ValueError):
-                pass
-        cap = max_t - step
-        if whole_ceiling:
-            # The device shows whole degrees: 29.5 would read back as 30 and be resent every cycle
-            cap = math.floor(cap)
-        ceiling = max(cap, celsius_to_ha_temp(self.hass, effective_target))
-        return min(ha_t, ceiling)
+        return min(ha_t, max(cap, celsius_to_ha_temp(self.hass, effective_target)))
 
     def _proportional_deadband(self, eid: str, current_temp: float | None, effective_target: float) -> float | None:
         """Deadband for a proportional setpoint send; None marks a send that is not proportional.
@@ -2994,7 +3170,8 @@ class MPCController:
         first setpoint after any other command that was actually sent (mode
         change, idle), a changed room target, a device that is not running in
         the commanded mode, and devices without usable state, whose
-        sent-command cache (#416) stays as it is. A compressor hold that sends
+        sent-command cache (#416) stays as it is, and a device that dropped the
+        value it was switched on with (``_setpoint_dropped``). A compressor hold that sends
         nothing keeps the record; it only matters if the hold ends within the
         dwell, since a hold lasts the group's minimum run. Dual-setpoint devices
         get the proportional value on ``target_temp_low``/``high`` and dwell the same way.
@@ -3004,16 +3181,43 @@ class MPCController:
         if state is None or _should_use_cache(state):
             return False
         record = _proportional_sent.get(eid)
-        if record is None or _now() - record[0] >= PROPORTIONAL_SETPOINT_DWELL_SECONDS:
+        if record is None or _now() - record.at >= PROPORTIONAL_SETPOINT_DWELL_SECONDS:
             return False
-        sent_heat, sent_cool = record[1]
+        sent_heat, sent_cool = record.targets
         heat, cool = self._current_target_pair()
         if _target_moved(sent_heat, heat) or _target_moved(sent_cool, cool):
             return False
         desired_mode = data.get("hvac_mode")
-        if desired_mode is not None:
-            return bool(state.state == desired_mode)
-        return bool(state.state != "off")
+        if desired_mode is not None and state.state != desired_mode:
+            return False
+        if desired_mode is None and state.state == "off":
+            return False
+        if self._setpoint_dropped(record, state):
+            # One more send per switch-on, also when it fails
+            _proportional_sent[eid] = replace(record, switched_on=False)
+            _dwell_reasserting[eid] = record.at
+            return False
+        return True
+
+    def _setpoint_dropped(self, record: _ProportionalSend, state: Any) -> bool:
+        """True when a device switched on with this setpoint shows another one well after the send.
+
+        Some devices take the value and fall back to their own one moments later
+        (tado X over Matter restores its pre-switch-on setpoint), so the dwell held a
+        value the device no longer had. Only after a switch-on: a device that clamps
+        the value or reports it late is not commanded again within every dwell (#317).
+        """
+        if not record.switched_on or _now() - record.at < PROPORTIONAL_SETPOINT_REPORT_SECONDS:
+            return False
+        tolerance = max(
+            _resolve_step(self.hass, state.attributes) or 0.0,
+            celsius_delta_to_ha(self.hass, PROPORTIONAL_SETPOINT_REPORT_TOLERANCE),
+        )
+        for key, sent in record.values.items():
+            shown = state.attributes.get(key)
+            if isinstance(shown, (int, float)) and abs(shown - sent) > tolerance:
+                return True
+        return False
 
     async def _apply_active_fan_mode(self, eid: str) -> None:
         """Apply the configured active fan mode while a device heats/cools.
@@ -3339,6 +3543,12 @@ class MPCController:
                 _active_targets.setdefault(eid, (self._idle_targets.heat, self._idle_targets.cool))
             return _CALL_CONFIRMED if confirmed or cache_checked else _CALL_SKIPPED
 
+        # A switch-on goes out as set_hvac_mode first, then the setpoint with the mode again
+        previous = _last_commands.get(eid) if eid else None
+        switches_on = bool(data.get("hvac_mode")) and (
+            (state.state if state else None) != data["hvac_mode"]
+            or (previous is not None and previous.get("service") == "set_hvac_mode")
+        )
         try:
             await self.hass.services.async_call(
                 "climate",
@@ -3352,7 +3562,12 @@ class MPCController:
                 if self._idle_targets is not None:
                     _active_targets[eid] = (self._idle_targets.heat, self._idle_targets.cool)
                 if deadband is not None and service == "set_temperature" and _carries_setpoint(data):
-                    _proportional_sent[eid] = (_now(), self._current_target_pair())
+                    _proportional_sent[eid] = _ProportionalSend(
+                        at=_dwell_reasserting.get(eid, _now()),
+                        targets=self._current_target_pair(),
+                        values=_controlled_setpoints(data, temp_intent),
+                        switched_on=switches_on,
+                    )
         except Exception:  # noqa: BLE001
             _LOGGER.warning(
                 "Area '%s': climate.%s failed on '%s'",
@@ -3362,4 +3577,7 @@ class MPCController:
                 exc_info=True,
             )
             return _CALL_FAILED
+        finally:
+            if eid:
+                _dwell_reasserting.pop(eid, None)
         return _CALL_SENT

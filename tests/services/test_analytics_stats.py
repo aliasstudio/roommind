@@ -63,6 +63,30 @@ def test_a_run_already_going_at_the_start_of_the_range_is_no_start():
     assert stats["cooling_starts"] == 1
 
 
+def test_starts_counted_when_recorded_replace_the_transitions():
+    # A compacted bucket: its mode is the first one, the runs inside are in the counts
+    points = [
+        _point(0, mode="idle", heat_starts=2, cool_starts=0),
+        _point(1, mode="heating", heat_starts=0, cool_starts=0),
+        _point(2, mode="idle", heat_starts=0, cool_starts=1),
+    ]
+    stats = compute_period_stats(points, "auto")
+    assert stats["heating_starts"] == 2
+    assert stats["cooling_starts"] == 1
+
+
+def test_points_without_counts_fall_back_to_transitions_without_counting_twice():
+    points = [
+        _point(0, mode="idle"),
+        _point(1, mode="heating"),
+        _point(2, mode="idle"),
+        # First row with counts: its own start is in the column, not the transition
+        _point(3, mode="heating", heat_starts=1, cool_starts=0),
+        _point(4, mode="heating", heat_starts=0, cool_starts=0),
+    ]
+    assert compute_period_stats(points, "auto")["heating_starts"] == 2
+
+
 def test_comfort_splits_into_cold_within_warm():
     points = [
         _point(0, room_temp=20.0),
@@ -201,3 +225,217 @@ def test_window_never_ends_in_the_future():
     days, end = rhythm_window(_local_ts(1, 0) - 86400 * 40, now + 86400, now)
     assert days == RHYTHM_MAX_DAYS
     assert end == now
+
+
+def test_miss_deviation_is_the_mean_while_off_target():
+    points = [
+        _point(0, room_temp=20.0),
+        _point(1, room_temp=21.0),
+        _point(2, room_temp=21.0),
+        _point(3, room_temp=25.0),
+    ]
+    comfort = compute_period_stats(points, "auto")["comfort"]
+    assert comfort["miss_deviation"] == pytest.approx(1.0)
+
+
+def test_miss_deviation_is_none_without_misses():
+    points = [_point(0, room_temp=20.8), _point(1, room_temp=24.4)]
+    assert compute_period_stats(points, "auto")["comfort"]["miss_deviation"] is None
+
+
+def test_rhythm_hours_split_like_the_period_figures():
+    # 10 minutes 1.5 K too cold inside an hour on target: the hourly mean (-0.25 K) hides it,
+    # the share does not
+    samples = _hour_of_samples(5, 7)
+    for s in samples[:4]:
+        s["room_temp"] = 19.5
+    for s in samples[4:6]:
+        s["room_temp"] = 24.4  # past the cool target, inside the tolerance
+    rhythm = compute_rhythm(_hour_of_samples(4, 7) + samples, "auto", _local_ts(5, 20))
+    assert rhythm is not None
+    day = rhythm["days"][0]
+    assert day["below"][7] == 0.2
+    assert day["above"][7] == 0
+    assert day["below"][8] is None
+    assert day["within"] == 0.8
+    assert rhythm["days"][1]["within"] == 1
+
+
+def test_rhythm_day_without_judged_samples_has_no_share():
+    samples = _hour_of_samples(5, 7, window_open=True)
+    rhythm = compute_rhythm(_hour_of_samples(4, 7) + samples, "auto", _local_ts(5, 20))
+    assert rhythm is not None
+    assert rhythm["days"][0]["within"] is None
+    assert rhythm["days"][0]["below"][7] is None
+
+
+def _run(temps_and_modes: list[tuple[float, str]], **kw) -> list[dict]:
+    return [_point(i, room_temp=t, mode=m, **kw) for i, (t, m) in enumerate(temps_and_modes)]
+
+
+def test_overshoot_is_the_peak_after_each_heating_run():
+    points = _run(
+        [(20.5, "heating"), (21.0, "heating"), (21.4, "idle"), (21.8, "idle"), (21.5, "idle")]
+        + [(20.6, "idle")] * 25
+        + [(20.7, "heating"), (21.0, "idle"), (21.2, "idle")]
+    )
+    over = compute_period_stats(points, "auto")["heat_overshoot"]
+    assert over == {"runs": 2, "mean": pytest.approx(0.5), "max": pytest.approx(0.8)}
+
+
+def test_overshoot_window_ends_after_an_hour_and_at_the_next_run():
+    late_rise = [(21.0, "heating")] + [(21.0, "idle")] * 25 + [(23.0, "idle")]
+    assert compute_period_stats(_run(late_rise), "auto")["heat_overshoot"]["max"] == 0
+    next_run = [(21.0, "heating"), (21.2, "idle"), (21.0, "heating"), (21.0, "idle")]
+    assert compute_period_stats(_run(next_run), "auto")["heat_overshoot"]["max"] == pytest.approx(0.2)
+
+
+def test_overshoot_ignores_open_windows_and_counts_cooling_downwards():
+    points = _run([(21.0, "heating"), (21.0, "idle")]) + [_point(2, room_temp=25.0, mode="idle", window_open=True)]
+    assert compute_period_stats(points, "auto")["heat_overshoot"]["max"] == 0
+    cooling = _run([(24.5, "cooling"), (24.0, "idle"), (23.6, "idle")])
+    assert compute_period_stats(cooling, "auto")["cool_overshoot"]["max"] == pytest.approx(0.4)
+
+
+def _bucket(i: int, mode: str, temp: float, low: float, high: float, **kw) -> dict:
+    """A compacted 5-min history row: first mode, mean temperature, extremes and run starts."""
+    starts = {"heat_starts": 0, "cool_starts": 0, **kw.pop("starts", {})}
+    return {
+        **_point(0, mode=mode, room_temp=temp, room_temp_min=low, room_temp_max=high, **starts, **kw),
+        "ts": T0 + i * 300,
+    }
+
+
+def test_compacted_overshoot_sees_a_run_inside_a_bucket_that_starts_idle():
+    points = [
+        _bucket(0, "idle", 20.8, 20.7, 20.9),
+        # Heats for two minutes after the bucket started idle, the room peaks at 21.6 after it
+        _bucket(1, "idle", 21.0, 20.8, 21.3, starts={"heat_starts": 1}),
+        _bucket(2, "idle", 21.4, 21.3, 21.6),
+        _bucket(3, "idle", 21.2, 21.1, 21.3),
+    ]
+    over = compute_period_stats(points, "auto")["heat_overshoot"]
+    assert over == {"runs": 1, "mean": pytest.approx(0.6), "max": pytest.approx(0.6)}
+
+
+def test_compacted_overshoot_takes_the_extreme_of_the_bucket_on_the_run_side():
+    heating = [_bucket(0, "heating", 20.8, 20.6, 21.0, starts={"heat_starts": 1}), _bucket(1, "idle", 21.3, 21.1, 21.7)]
+    assert compute_period_stats(heating, "auto")["heat_overshoot"]["max"] == pytest.approx(0.7)
+    cooling = [_bucket(0, "cooling", 24.2, 24.0, 24.5, starts={"cool_starts": 1}), _bucket(1, "idle", 23.8, 23.5, 24.0)]
+    assert compute_period_stats(cooling, "auto")["cool_overshoot"]["max"] == pytest.approx(0.5)
+
+
+def test_compacted_overshoot_splits_runs_that_meet_inside_a_bucket():
+    points = [
+        _bucket(0, "heating", 20.8, 20.6, 21.0, starts={"heat_starts": 1}),
+        # The first run ended and the next one started inside this bucket; like a detail row of
+        # the next run, the bucket no longer counts for the first one
+        _bucket(1, "heating", 21.1, 20.9, 21.4, starts={"heat_starts": 1}),
+        _bucket(2, "idle", 21.5, 21.4, 21.9),
+        _bucket(3, "idle", 21.2, 21.0, 21.4),
+    ]
+    over = compute_period_stats(points, "auto")["heat_overshoot"]
+    assert over == {"runs": 2, "mean": pytest.approx(0.45), "max": pytest.approx(0.9)}
+
+
+def test_overshoot_only_for_the_controlled_side():
+    points = _run([(21.0, "heating"), (21.5, "idle")])
+    assert compute_period_stats(points, "cool_only")["heat_overshoot"] is None
+    assert compute_period_stats(points, "heat_only")["cool_overshoot"] is None
+    assert compute_period_stats(_run([(21.0, "idle")]), "auto")["heat_overshoot"] is None
+
+
+def test_run_hours_by_price_level():
+    points = [
+        _point(0, mode="heating", price_level="cheap", price_shift=1.0, heat_target=22.0, cool_target=23.0),
+        _point(1, mode="heating", price_level="cheap", price_shift=1.0, heat_target=22.0, cool_target=23.0),
+        _point(2, mode="heating", price_level="expensive"),
+        _point(3, mode="idle", price_level="normal"),
+        _point(4, mode="idle", price_level="normal"),
+    ]
+    price = compute_period_stats(points, "auto")["price"]
+    assert price["heating_hours"] == {"cheap": 0.1, "expensive": 0.05}
+    assert price["cooling_hours"] == {}
+    assert price["shifted_hours"] == 0.1
+
+
+def test_no_price_figures_without_price_data():
+    assert compute_period_stats(_modes("heating", "idle"), "auto")["price"] is None
+
+
+def test_comfort_is_judged_against_the_schedule_not_the_price_shift():
+    # Coasting 1 K below a 21 °C schedule while expensive: the room at 19.9 °C is too cold
+    coast = _point(0, room_temp=19.9, heat_target=20.0, cool_target=25.0, price_shift=-1.0)
+    assert compute_period_stats([coast, _point(1)], "auto")["comfort"]["below_pct"] == 50
+
+
+def _targeted(rows: list[tuple[float, str, float]], key: str = "heat_target") -> list[dict]:
+    return [_point(i, room_temp=t, mode=m, **{key: target}) for i, (t, m, target) in enumerate(rows)]
+
+
+def test_a_preheat_ending_under_eco_counts_against_the_coming_target():
+    """The run ends while eco 18 is still in force; 21 follows half an hour later."""
+    rows = [(19.5, "heating", 18.0), (20.6, "heating", 18.0)]
+    rows += [(21.4, "idle", 18.0)] * 5 + [(21.4, "idle", 21.0)] * 5
+    over = compute_period_stats(_targeted(rows), "auto")["heat_overshoot"]
+    assert over["max"] == pytest.approx(0.4)
+
+
+def test_a_run_ended_by_a_lower_target_counts_against_the_target_it_ran_for():
+    rows = [(18.5, "heating", 19.0), (19.0, "heating", 19.0), (19.0, "heating", 15.0)]
+    rows += [(19.4, "idle", 15.0)] * 4
+    over = compute_period_stats(_targeted(rows), "auto")["heat_overshoot"]
+    assert over["max"] == pytest.approx(0.4)
+
+
+def test_overshoot_at_a_constant_target_still_counts():
+    rows = [(20.5, "heating", 21.0), (21.0, "heating", 21.0), (21.9, "idle", 21.0), (21.6, "idle", 21.0)]
+    assert compute_period_stats(_targeted(rows), "auto")["heat_overshoot"]["max"] == pytest.approx(0.9)
+    cooling = [(25.0, "cooling", 24.0), (24.0, "idle", 26.0), (23.2, "idle", 26.0)]
+    assert compute_period_stats(_targeted(cooling, "cool_target"), "auto")["cool_overshoot"]["max"] == pytest.approx(
+        0.8
+    )
+
+
+def test_a_run_coasting_under_a_price_lowered_target_counts_against_the_schedule():
+    """Expensive hours: schedule 19, target 18; the room is heated to 19.4, that is 0.4 past the schedule."""
+    rows = [(18.6, "heating", 18.0), (19.0, "heating", 18.0)] + [(19.4, "idle", 18.0)] * 4
+    points = [{**p, "price_shift": -1.0} for p in _targeted(rows)]
+    assert compute_period_stats(points, "auto")["heat_overshoot"]["max"] == pytest.approx(0.4)
+
+
+def test_a_run_charging_under_a_price_raised_target_counts_against_that_target():
+    """Cheap hours: schedule 19, target 20; heating to 20.2 is the intended charge plus 0.2."""
+    rows = [(19.5, "heating", 20.0), (19.9, "heating", 20.0)] + [(20.2, "idle", 20.0)] * 4
+    points = [{**p, "price_shift": 1.0} for p in _targeted(rows)]
+    assert compute_period_stats(points, "auto")["heat_overshoot"]["max"] == pytest.approx(0.2)
+
+
+def test_cooling_overshoot_takes_the_price_shift_out_on_the_cool_side():
+    """Expensive: cool schedule 24 raised to 25 (shift -1 on the heat-side sign); 23.7 is 0.3 past 24."""
+    rows = [(25.2, "cooling", 25.0), (24.6, "cooling", 25.0)] + [(23.7, "idle", 25.0)] * 3
+    points = [{**p, "price_shift": -1.0} for p in _targeted(rows, "cool_target")]
+    assert compute_period_stats(points, "auto")["cool_overshoot"]["max"] == pytest.approx(0.3)
+
+
+def test_preheat_pulses_count_against_the_target_after_the_next_pulse():
+    """Short pre-heat pulses under eco: each window ends at the next pulse, the target rises later."""
+    rows = [(20.0, "heating", 18.0), (21.9, "idle", 18.0), (21.0, "heating", 18.0), (21.6, "idle", 18.0)]
+    rows += [(21.4, "idle", 18.0)] * 3 + [(21.2, "heating", 21.0), (21.0, "heating", 21.0), (21.1, "idle", 21.0)]
+    over = compute_period_stats(_targeted(rows), "auto")["heat_overshoot"]
+    assert over["max"] == pytest.approx(0.9)
+
+
+def test_a_preheat_hours_before_the_block_counts_against_the_block():
+    """The room is above eco already when the run starts: only a coming block explains it."""
+    rows = [(20.0, "heating", 18.0), (20.9, "idle", 18.0)] + [(20.6, "idle", 18.0)] * 25
+    rows += [(20.5, "idle", 21.0)]
+    over = compute_period_stats(_targeted(rows), "auto")["heat_overshoot"]
+    assert over["max"] == 0
+
+
+def test_a_run_from_below_eco_keeps_eco_as_its_target_even_before_a_block():
+    rows = [(16.8, "heating", 17.0), (18.0, "idle", 17.0)] + [(17.6, "idle", 17.0)] * 25
+    rows += [(17.5, "idle", 21.0)]
+    over = compute_period_stats(_targeted(rows), "auto")["heat_overshoot"]
+    assert over["max"] == pytest.approx(1.0)
