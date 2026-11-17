@@ -155,6 +155,21 @@ export class RsBlockForm extends LitElement {
         color: var(--secondary-text-color);
       }
 
+      .advanced > summary {
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .advanced-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 var(--rs-space-3);
+      }
+
+      .advanced-grid > rs-list-row {
+        grid-column: 1 / -1;
+      }
+
       .hint {
         margin: var(--rs-space-2) 0 0;
         font-size: var(--rs-font-sm);
@@ -368,8 +383,9 @@ export class RsBlockForm extends LitElement {
       label: fanModeLabel(this.hass, mode),
     }));
     const swingOptions = modesOf("swing_modes").map((mode) => ({ value: mode, label: mode }));
-    return html`<div class="section">
-      <p class="section-title">${localize("schedule.editor_advanced", l)}</p>
+    return html`<details class="section advanced">
+      <summary class="section-title">${localize("schedule.editor_advanced", l)}</summary>
+      <div class="advanced-grid">
       ${types.map((type) =>
         this._renderSelect(
           localize(`schedule.editor_idle_action_${type}`, l),
@@ -428,7 +444,8 @@ export class RsBlockForm extends LitElement {
               ></rs-list-row>`
           : nothing
       }
-    </div>`;
+      </div>
+    </details>`;
   }
 
   /** A stored value the devices no longer offer stays visible instead of reading as inherit. */

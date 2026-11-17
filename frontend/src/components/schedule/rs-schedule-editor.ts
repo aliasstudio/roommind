@@ -332,7 +332,7 @@ export class RsScheduleEditor extends LitElement {
       }
 
       .pop {
-        width: min(340px, calc(100vw - 16px));
+        width: min(440px, calc(100vw - 16px));
         max-height: calc(100vh - 16px);
         overflow-y: auto;
         padding: var(--rs-space-3) var(--rs-space-4) var(--rs-space-4);
