@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import Context
 
 DOMAIN = "roommind"
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -137,6 +137,12 @@ PROPORTIONAL_SETPOINT_REPORT_SECONDS = (
 PROPORTIONAL_SETPOINT_REPORT_TOLERANCE = (
     0.5  # K a shown setpoint may differ from the sent one (device rounding) before it counts as dropped
 )
+# A device RoomMind switched off that shows "off" but still reports a run lost the command
+# (Zigbee TRV heating for hours behind an optimistic "off"); sent again only to devices seen to drop a run's
+# hvac_action after an off, so integrations whose hvac_action ignores the mode get nothing extra
+OFF_CONFIRM_SECONDS = 300  # Time a device may keep reporting the run after the off before it is sent again
+OFF_RESEND_INTERVAL_SECONDS = 600  # Minimum time between two sends of the same lost off
+OFF_RESEND_MAX = 3  # Sends per off before RoomMind gives up and leaves a warning
 BOOST_CAP_FALLBACK_STEP = 0.5  # Distance kept below a device's max_temp for proportional heating setpoints when it reports no target_temp_step (#396)
 # Direct valve control (#413): TRVs whose valve opening RoomMind sets through number entities
 VALVE_DWELL_SECONDS = 600  # Minimum time a valve position stays before a small correction moves the motor again
@@ -334,6 +340,9 @@ HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (
 # Compressor group defaults
 DEFAULT_COMPRESSOR_MIN_RUN_MINUTES = 15
 DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
+# "All in the same mode" (#533): a switch waits for the units still in the other mode to go off,
+# at most this long (a unit still in its min run longer): a unit RoomMind may not touch must not block it for good.
+UNIFORM_SWITCH_MAX_WAIT_S = 300
 # Devices without usable state (IR blasters) get an unchanged command once more after this long.
 # Long enough that it is not audible as a beep pattern (#416), short enough to heal a lost frame,
 # a change on the remote or a restarted device within one comfortable stretch.
