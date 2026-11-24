@@ -317,7 +317,7 @@ export class RoomMindRoomCard extends LitElement {
           }
           <div class="hint ${cls}">${text}</div>
           ${
-            link
+            link && this._canOpenPanel()
               ? html`<a class="open-link" href=${this._roomPath()} @click=${this._openRoom}
                   >${localize("roomcard.open_room", this._lang)}</a
                 >`
@@ -328,12 +328,18 @@ export class RoomMindRoomCard extends LitElement {
     `;
   }
 
+  /** The panel is admin-only; other users get the room name as plain text. */
+  private _canOpenPanel(): boolean {
+    return this.hass.user?.is_admin === true;
+  }
+
   private _roomPath(): string {
     return `/roommind/room/${encodeURIComponent(this._config?.area ?? "")}`;
   }
 
   private _renderName(area: string, room: RoomConfig | undefined) {
     const name = room?.display_name || this.hass.areas?.[area]?.name || area;
+    if (!this._canOpenPanel()) return html`<span class="name">${name}</span>`;
     return html`<a class="name" href=${this._roomPath()} @click=${this._openRoom}>${name}</a>`;
   }
 
@@ -963,7 +969,7 @@ export class RoomMindRoomCard extends LitElement {
         line-height: 44px;
       }
 
-      .name:hover {
+      a.name:hover {
         text-decoration: underline;
       }
 

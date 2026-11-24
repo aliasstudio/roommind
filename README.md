@@ -59,7 +59,7 @@ RoomMind turns the thermostats, radiator valves and air conditioners you already
   </tr>
   <tr>
     <td>🔥 <b>Devices</b></td>
-    <td>TRVs, ACs, heat pumps, underfloor heating · heat source selection between radiators and AC · compressor groups for multi-split units · idle as off, fan only or setback · proportional or direct setpoint per device</td>
+    <td>TRVs, ACs, heat pumps, underfloor heating · heat source selection between radiators and AC · shared boiler or outdoor unit switched by room demand, with compressor protection for multi-split units · idle as off, fan only or setback · proportional or direct setpoint per device</td>
   </tr>
   <tr>
     <td>🏠 <b>Around the room</b></td>
@@ -92,7 +92,7 @@ Every feature in detail: [docs/features.md](docs/features.md). Device types, set
 
 ## Getting Started
 
-RoomMind appears as a panel in the sidebar and shows every Home Assistant area as a room.
+RoomMind appears as a panel in the sidebar (for administrators) and shows every Home Assistant area as a room.
 
 1. **Open a room** from the overview
 2. **Add a device**: at least one thermostat, radiator valve or AC (`climate.*`)
@@ -118,7 +118,7 @@ It shows the room's temperature, target, humidity and what RoomMind is doing, pl
 - **Climate control switch**: turns RoomMind's control of the room on or off, same as the switch in the panel
 - **Comfort and eco temperatures**: change the room's comfort and eco targets
 
-Each part can be hidden in the card editor, e.g. a card for the family that only offers the override. **Compact layout** makes the card smaller: icon-only buttons side by side and a smaller status block; with every part hidden it is a plain status card. Hiding only changes what the card shows: every Home Assistant user can still change these settings in the RoomMind panel. Tap the room name to open the room in the panel. Outdoor areas show their readings only.
+Each part can be hidden in the card editor, e.g. a card for the family that only offers the override. **Compact layout** makes the card smaller: icon-only buttons side by side and a smaller status block; with every part hidden it is a plain status card. Hiding only changes what the card shows: the room climate entity still offers the same controls. The RoomMind panel and every other setting are for Home Assistant administrators only; other users can use the card but cannot open the panel. Administrators tap the room name to open the room in the panel. Outdoor areas show their readings only.
 
 <details>
 <summary>YAML</summary>
@@ -251,7 +251,7 @@ If you changed insulation or radiators or moved sensors, use "Re-learn faster" i
 <details>
 <summary><b>The panel does not update after an update</b></summary>
 
-Hard-refresh the browser: **Cmd+Shift+R** (Mac) or **Ctrl+Shift+R** (Windows/Linux).
+Restart Home Assistant after the update, then reload the browser tab. If it still shows the old version (before 2.0.1, or files copied in by hand without a new version number), hard-refresh: **Cmd+Shift+R** (Mac) or **Ctrl+Shift+R** (Windows/Linux).
 
 </details>
 
