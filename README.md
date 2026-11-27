@@ -25,13 +25,14 @@ RoomMind turns the thermostats, radiator valves and air conditioners you already
 
 ## What's different in this fork
 
-The original [RoomMind by SnazzyBean](https://github.com/snazzybean/roommind) provides the Home Assistant integration, predictive room control, and dashboard. This fork adds controls for homes that use both air conditioners and radiators, with more options for airflow, humidity, and heating schedules.
+This fork grew out of a bedroom problem. I wanted to keep the room cool at night without the AC blowing cold air at the bed. The fork builds on the original [RoomMind by SnazzyBean](https://github.com/snazzybean/roommind) and adds controls for situations like that.
 
-- **AC airflow and louvers.** Set a fixed fan speed or let RoomMind adjust it to demand within configurable limits. Choose separate louver positions for heating, cooling, and initial heating warm-up. Set a cooling setpoint floor to limit cold drafts.
-- **Humidity control.** Run compatible ACs in Dry mode with separate start and stop humidity thresholds, an optional device setpoint, and a fan speed cap.
-- **Mixed heating.** Pick the lead heat source and how much the other source assists. A heating-season switch suspends radiator heating while the water circuit is off. The fork also adds refinements to valve modulation and compressor cycling.
-- **Schedule block controls.** Override idle behavior separately for ACs and radiator valves, set fan limits and louver positions, and disable dehumidification in individual blocks of a Home Assistant schedule.
-- **Turbo cooling and monitoring.** Start a full-cooling override from the room panel. An optional watchdog detects rooms that run at high output without the expected temperature response, with per-room exclusions. Analytics show fan speed, dehumidification periods, and its humidity thresholds.
+- **Cool the bedroom without a draft.** Cap the fan speed in the night schedule and let it run faster during the day. Each schedule block can set fan limits and louver positions, and a cooling setpoint floor can keep the AC from aiming too low.
+- **Bring humidity down with the AC.** Set when Dry mode starts and stops, optionally give it its own temperature target, and cap the fan while it runs. A schedule block can disable drying when you prefer.
+- **Adapt heating to the season and your costs.** Use the heating-season switch when the building shuts off radiator heat. In rooms with both a radiator and an AC that can heat, choose which source leads and how much the other one helps. The AC can assist the radiator or take the lead when it makes sense for your home.
+- **Cool down quickly when guests arrive.** Start a Turbo override from the room panel when the usual schedule is too warm for a room full of people.
+
+The analytics chart shows fan speed, drying periods, and humidity thresholds. An optional watchdog alerts you when a room runs at high heating or cooling output without the expected temperature response.
 
 ## Screenshots
 
