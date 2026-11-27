@@ -4,11 +4,11 @@
 
 **Room-by-room climate control for Home Assistant that learns how your home heats and cools.**
 
-[![Home Assistant Marketplace](https://img.shields.io/badge/Marketplace-Default-orange.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=snazzybean&repository=roommind&category=integration)
+**The aliasstudio fork of RoomMind, originally created by SnazzyBean.**
+
+[![Home Assistant Marketplace](https://img.shields.io/badge/Marketplace-Add%20fork-orange.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=aliasstudio&repository=roommind&category=integration)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.5%2B-blue.svg)](https://www.home-assistant.io/)
-[![GitHub Release](https://img.shields.io/github/v/release/snazzybean/roommind)](https://github.com/snazzybean/roommind/releases/latest)
-[![Tests](https://github.com/snazzybean/roommind/actions/workflows/ci.yml/badge.svg)](https://github.com/snazzybean/roommind/actions/workflows/ci.yml)
-![Coverage](https://raw.githubusercontent.com/snazzybean/roommind/python-coverage-comment-action-data/badge.svg)
+[![Fork release](https://img.shields.io/github/v/release/aliasstudio/roommind)](https://github.com/aliasstudio/roommind/releases/latest)
 [![License](https://img.shields.io/github/license/snazzybean/roommind)](https://github.com/snazzybean/roommind/blob/main/LICENSE)
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20RoomMind-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/Y8Y31VP2VK)
 
@@ -22,6 +22,16 @@ RoomMind turns the thermostats, radiator valves and air conditioners you already
 - 🔌 **Works with your devices.** Any `climate` entity: radiator valves, ACs, heat pumps, underfloor heating, also mixed in one room.
 - 🧭 **Set up in minutes.** Rooms, schedules and settings in one panel, plus a card for any dashboard.
 - 📊 **Shows its work.** How well each room held its target, how long it heated and what the model has learned.
+
+## What's different in this fork
+
+The original [RoomMind by SnazzyBean](https://github.com/snazzybean/roommind) provides the Home Assistant integration, predictive room control, and dashboard. This fork adds controls for homes that use both air conditioners and radiators, with more options for airflow, humidity, and heating schedules.
+
+- **AC airflow and louvers.** Set a fixed fan speed or let RoomMind adjust it to demand within configurable limits. Choose separate louver positions for heating, cooling, and initial heating warm-up. Set a cooling setpoint floor to limit cold drafts.
+- **Humidity control.** Run compatible ACs in Dry mode with separate start and stop humidity thresholds, an optional device setpoint, and a fan speed cap.
+- **Mixed heating.** Pick the lead heat source and how much the other source assists. A heating-season switch suspends radiator heating while the water circuit is off. The fork also adds refinements to valve modulation and compressor cycling.
+- **Schedule block controls.** Override idle behavior separately for ACs and radiator valves, set fan limits and louver positions, and disable dehumidification in individual blocks of a Home Assistant schedule.
+- **Turbo cooling and monitoring.** Start a full-cooling override from the room panel. An optional watchdog detects rooms that run at high output without the expected temperature response, with per-room exclusions. Analytics show fan speed, dehumidification periods, and its humidity thresholds.
 
 ## Screenshots
 
@@ -75,16 +85,16 @@ Every feature in detail: [docs/features.md](docs/features.md). Device types, set
 
 ## Installation
 
-[![Open your Home Assistant instance and open RoomMind in the Marketplace.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=snazzybean&repository=roommind&category=integration)
+[![Open this RoomMind fork in Home Assistant Marketplace.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=aliasstudio&repository=roommind&category=integration)
 
-1. Open the **Marketplace** in Home Assistant (formerly HACS), search for **RoomMind** and install it
+1. Open the **Marketplace** in Home Assistant (formerly HACS) and add `aliasstudio/roommind` via **Add from link**. Select the fork and install it.
 2. Restart Home Assistant
 3. Go to **Settings → Devices & Services → Add Integration → RoomMind**
 
 <details>
 <summary>Manual installation</summary>
 
-1. Copy `custom_components/roommind/` to your `config/custom_components/` directory
+1. Download `roommind.zip` from the [fork's latest release](https://github.com/aliasstudio/roommind/releases/latest) and extract it into `config/custom_components/roommind/`
 2. Restart Home Assistant
 3. Go to **Settings → Devices & Services → Add Integration → RoomMind**
 
